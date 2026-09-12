@@ -22,6 +22,7 @@ import speech_recognition as sr
 from magnum.voice.calibration import load_calibration
 from magnum.voice.turn_detector import TurnDetector, TurnDetectorConfig, TurnState
 from magnum.voice.translator import HindiEnglishTranslator, get_hindi_translator, TranslationResult
+from magnum.voice.intent_classifier import CommandIntentClassifier, get_command_classifier
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -39,8 +40,9 @@ class VoiceEngine:
     Hands-free Voice Engine for Magnum.
     Features:
     - High-sensitivity VAD calibrated to ambient noise and near/far voice
+    - Local On-The-Fly Command & Task Intent Detector (no wake-word friction)
     - Live terminal feedback showing every transcribed utterance
-    - Punctuation-normalized command extraction
+    - Punctuation-normalized command extraction & Hindi/Hinglish translation
     - Non-blocking responsive loop that exits cleanly on Ctrl+C
     - Echo prevention (mutes microphone during speech synthesis)
     """
@@ -82,6 +84,8 @@ class VoiceEngine:
         # LiveKit / BargeKit-inspired smart turn detector & Hindi translator
         self.turn_detector = TurnDetector()
         self.translator = get_hindi_translator()
+        # On-the-fly local task & command intent classifier
+        self.intent_classifier = get_command_classifier()
 
     def play_chime(self, sound_path: str = CHIME_WAKE) -> None:
         """Play a subtle native macOS system audio chime."""
@@ -237,13 +241,15 @@ class VoiceEngine:
 
     def extract_command(self, transcript: str) -> Tuple[bool, Optional[str]]:
         """
-        Robust wake-word and command extraction.
-        Normalizes punctuation and matches longest wake words first.
+        Robust wake-word and intent-based command extraction.
+        1. Checks for explicit wake words ("hey", "magnum", "jarvis", etc.).
+        2. If no wake word is present, uses local CommandIntentClassifier to detect
+           if the utterance is an actionable command/task (e.g. "WhatsApp message ko reply").
         """
         text = transcript.lower().strip()
         clean = text.translate(str.maketrans("", "", string.punctuation)).strip()
 
-        # Sort wake words by length descending so "hey magnum" matches before "hey"
+        # 1. Check explicit wake words first
         sorted_ww = sorted(self.wake_words, key=len, reverse=True)
         for ww in sorted_ww:
             clean_ww = ww.strip().lower()
@@ -252,6 +258,24 @@ class VoiceEngine:
             if clean.startswith(clean_ww + " "):
                 cmd = clean[len(clean_ww):].strip()
                 return True, cmd if cmd else None
+
+        # 2. Local on-the-fly Command & Task Intent Detector
+        is_cmd, conf, reason = self.intent_classifier.is_actionable_command(transcript)
+        if is_cmd:
+            logger.info(f"⚡ Intent Classifier accepted command ({reason}, {conf:.0%}): '{transcript}'")
+            return True, transcript
+
+        # 3. Direct high-priority system commands
+        direct_system_keywords = (
+            "start a workflow", "create a workflow", "record a workflow", "new workflow",
+            "start the workflow", "create the workflow", "start workflow", "create workflow",
+            "start a voucher", "create a workshop", "start a work flow",
+            "stop watching", "cancel watchers", "stop all watchers", "stop watcher",
+            "what are you watching", "list watchers", "watcher status",
+            "list workflows", "show workflows", "what workflows do i have",
+        )
+        if any(kw in clean for kw in direct_system_keywords):
+            return True, transcript
 
         return False, None
 
@@ -279,8 +303,9 @@ class VoiceEngine:
         silence_timeout: Optional[float] = None,
     ) -> None:
         """
-        Continuously listen in background for wake words and dispatch commands.
+        Continuously listen in background for wake words or natural commands.
         Features:
+        - Local Intent Detector: Accepts commands directly without rigid wake words.
         - Smart Turn-Taking & Hesitation Resilience: Waits up to 3.2s if you pause to think.
         - Fake Interruption Filtering: Ignores coughs, mic thumps, and backchannels.
         - Hindi / Hinglish to English: Translates spoken Hindi/Hinglish before giving to model.
@@ -291,7 +316,7 @@ class VoiceEngine:
         vad_silence = silence_timeout or self.turn_detector.config.hesitation_delay
 
         console.print(
-            f"[dim]🎤 Voice listener active (Wake words: 'Hey', 'Magnum', 'Jarvis' | "
+            f"[dim]🎤 Voice listener active (AI Task Classifier: ACTIVE | "
             f"Hesitation resilience: {vad_silence:.1f}s | Hindi/Hinglish auto-translation: ON)[/dim]"
         )
 
@@ -334,25 +359,12 @@ class VoiceEngine:
 
                 detected, command = self.extract_command(transcript)
                 if not detected:
-                    # Allow direct high-priority system commands even if wake word was skipped or missed
-                    lower_clean = transcript.lower().strip()
-                    direct_system_keywords = (
-                        "start a workflow", "create a workflow", "record a workflow", "new workflow",
-                        "start the workflow", "create the workflow", "start workflow", "create workflow",
-                        "start a voucher", "create a workshop", "start a work flow",
-                        "stop watching", "cancel watchers", "stop all watchers", "stop watcher",
-                        "what are you watching", "list watchers", "watcher status",
-                        "list workflows", "show workflows", "what workflows do i have",
-                    )
-                    if any(kw in lower_clean for kw in direct_system_keywords):
-                        detected = True
-                        command = transcript
-                    else:
-                        continue
+                    console.print(f"[dim]💭 Casual speech ignored: '{transcript}'[/dim]")
+                    continue
 
-                # Wake word detected!
+                # Command / Task detected!
                 self.stop_speaking()
-                console.print(f"[bold green]⚡ Wake Word Detected: '{transcript}'[/bold green]")
+                console.print(f"[bold green]⚡ Command Accepted: '{command or transcript}'[/bold green]")
                 self.play_chime(CHIME_WAKE)
                 if on_wake:
                     on_wake()

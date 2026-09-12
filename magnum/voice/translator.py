@@ -146,8 +146,8 @@ class HindiEnglishTranslator:
             (r"^(?:screen|desktop)\s+(?:dekho|check karo)$", r"look at the screen and inspect active window"),
             # "(item) check karo" -> "check (item)"
             (r"^(.*?)\s+(?:ko\s+)?(?:check karo|check kar do)$", r"check \1"),
-            # "(contact) ko reply karo" -> "reply to (contact)"
-            (r"^(.*?)\s+(?:ko\s+)?(?:reply karo|reply kar do)$", r"reply to \1"),
+            # "(contact/item) ko reply [karo]" -> "reply to (contact/item)"
+            (r"^(.*?)\s+(?:ko\s+)?(?:reply(?:\s+karo|\s+kar\s+do)?)$", r"reply to \1"),
             # "wait / ruko"
             (r"^(?:ek second\s+)?(?:ruko|ruk ja|ruk jao)$", r"wait"),
         ]

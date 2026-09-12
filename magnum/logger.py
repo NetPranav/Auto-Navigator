@@ -561,6 +561,8 @@ def log_task_complete(instruction: str, success: bool, duration_seconds: float =
 
 def get_latest_run_summary() -> str:
     """Return the complete markdown audit report of the latest task run."""
+    if flight_recorder.current_audit:
+        return flight_recorder.render_markdown_report()
     run_file = get_latest_run_file_path()
     if run_file.exists():
         return run_file.read_text(encoding="utf-8")
