@@ -5,7 +5,8 @@ from PIL import Image
 from magnum.agent import MagnumAgent
 from magnum.config import AppConfig
 from magnum.intelligence.grounding import TextElement
-from magnum.intelligence.planner import PlanStep
+from magnum.intelligence.planner import PlanStep, PlanChecklist
+from magnum.intelligence.nim_client import NimClient, GroundedAction
 
 
 def make_text_element(
@@ -82,137 +83,153 @@ def test_should_auto_skip_app_open():
     ) is not None
 
 
+def test_nim_client_obstacle_detection_from_text():
+    nim = NimClient()
+    # When model outputs text containing QR code instruction
+    action = nim.parse_json_response("The screen displays a WhatsApp QR code. Please scan the QR code with your phone.")
+    assert action["action"] == "OBSTACLE_DETECTED"
+    assert "qr code" in action["text"].lower()
+
+    # When model outputs text containing CAPTCHA
+    action_captcha = nim.parse_json_response("Cloudflare CAPTCHA verification required.")
+    assert action_captcha["action"] == "OBSTACLE_DETECTED"
+
+    # When model outputs text containing 2FA
+    action_2fa = nim.parse_json_response("Enter 2FA verification code sent to phone.")
+    assert action_2fa["action"] == "OBSTACLE_DETECTED"
+
+
 @pytest.mark.asyncio
-async def test_handle_qr_gate_welcome_screen_and_qr_scan():
+async def test_wait_for_obstacle_resolution_success():
     agent = MagnumAgent(cfg=AppConfig(default_execution_mode="desktop"))
-    agent.driver.click = AsyncMock()
     agent.driver.screenshot = AsyncMock(return_value=Image.new("RGB", (100, 100)))
-    agent.voice_engine.speak = MagicMock()
-    agent.overlay.set_status = MagicMock()
 
-    # Screen 1: WhatsApp Welcome screen with Continue button (including unicode LTR mark \u200e)
-    welcome_ocr = [
-        make_text_element("WhatsApp", 100, 100, 200, 50),
-        make_text_element("Simple. Reliable. Private.", 100, 160, 300, 30),
-        make_text_element("\u200eContinue", 700, 650, 120, 40),
+    # Initial obstacle screen (e.g. WhatsApp QR, Steam QR, Cloudflare Captcha)
+    obstacle_ocr = [
+        make_text_element("Scan this QR code with your phone", 100, 100, 400, 30),
+        make_text_element("Open mobile app and link device", 100, 140, 350, 25),
+        make_text_element("Point camera to screen", 100, 170, 300, 25),
     ]
 
-    # Screen 2 (after continue clicked): QR Code screen
-    qr_ocr = [
-        make_text_element("To use WhatsApp on your computer:", 100, 100, 400, 30),
-        make_text_element("1. Open WhatsApp on your phone", 100, 140, 350, 25),
-        make_text_element("2. Tap Menu or Settings and select Linked Devices", 100, 170, 400, 25),
-        make_text_element("3. Point your phone to this screen to capture the code", 100, 200, 450, 25),
-    ]
-
-    # Screen 3 (after user scans with phone): Logged-in WhatsApp screen
-    logged_in_ocr = [
-        make_text_element("WhatsApp", 50, 50, 100, 30),
+    # Destination UI after user scans (e.g. Chat UI loaded, dashboard loaded)
+    cleared_ocr = [
         make_text_element("Chats", 50, 100, 80, 30),
         make_text_element("Search or start new chat", 50, 140, 200, 30),
         make_text_element("Rishika", 50, 200, 100, 30),
         make_text_element("Status", 50, 250, 80, 30),
         make_text_element("Calls", 50, 300, 80, 30),
+        make_text_element("Settings", 50, 350, 80, 30),
+        make_text_element("Archived", 50, 400, 80, 30),
     ]
 
-    # Sequence of OCR responses during polling:
-    # 1. post_welcome_continue -> qr_ocr
-    # 2. qr_poll attempt 1 -> qr_ocr (still waiting)
-    # 3. qr_poll attempt 2 -> logged_in_ocr (user scanned!)
+    # First poll returns obstacle still present, second poll returns cleared UI
     with patch("magnum.intelligence.grounding.ScreenGrounder.extract_screen_text_elements", side_effect=[
-        qr_ocr,
-        qr_ocr,
-        logged_in_ocr,
+        obstacle_ocr,
+        cleared_ocr,
     ]):
-        result = await agent._handle_login_or_qr_gate(
-            ocr_elements=welcome_ocr,
-            a11y_tree=None,
-            active_app="WhatsApp",
-            screenshot=Image.new("RGB", (100, 100)),
+        resolved = await agent._wait_for_obstacle_resolution(
+            baseline_ocr=obstacle_ocr,
+            prompt_msg="Please scan QR code",
             max_wait_seconds=10,
+            poll_interval=0.01,
         )
-
-        assert result is True
-        # Verify Continue button was clicked
-        agent.driver.click.assert_called_once()
-        # Verify voice instructions were spoken to the user
-        spoken_calls = [call.args[0] for call in agent.voice_engine.speak.call_args_list]
-        assert any("scan the qr code" in s.lower() for s in spoken_calls)
-        assert any("login confirmed" in s.lower() for s in spoken_calls)
+        assert resolved is True
 
 
 @pytest.mark.asyncio
-async def test_handle_qr_gate_already_logged_in():
-    agent = MagnumAgent(cfg=AppConfig(default_execution_mode="desktop"))
-    agent.driver.click = AsyncMock()
-    agent.voice_engine.speak = MagicMock()
-
-    # WhatsApp is already logged in and showing chat list
-    logged_in_ocr = [
-        make_text_element("WhatsApp", 50, 50, 100, 30),
-        make_text_element("Chats", 50, 100, 80, 30),
-        make_text_element("Search", 50, 140, 200, 30),
-        make_text_element("Rishika", 50, 200, 100, 30),
-    ]
-
-    result = await agent._handle_login_or_qr_gate(
-        ocr_elements=logged_in_ocr,
-        a11y_tree=None,
-        active_app="WhatsApp",
-        screenshot=Image.new("RGB", (100, 100)),
-        max_wait_seconds=10,
-    )
-
-    # Should return False immediately without doing anything
-    assert result is False
-    agent.driver.click.assert_not_called()
-    agent.voice_engine.speak.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_handle_qr_gate_unrelated_app():
-    agent = MagnumAgent(cfg=AppConfig(default_execution_mode="desktop"))
-    agent.voice_engine.speak = MagicMock()
-
-    chrome_ocr = [
-        make_text_element("Google", 100, 100, 100, 50),
-        make_text_element("Search Google or type a URL", 100, 200, 300, 30),
-    ]
-
-    result = await agent._handle_login_or_qr_gate(
-        ocr_elements=chrome_ocr,
-        a11y_tree=None,
-        active_app="Google Chrome",
-        screenshot=Image.new("RGB", (100, 100)),
-        max_wait_seconds=10,
-    )
-
-    assert result is False
-    agent.voice_engine.speak.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_handle_qr_gate_timeout():
+async def test_wait_for_obstacle_resolution_timeout():
     agent = MagnumAgent(cfg=AppConfig(default_execution_mode="desktop"))
     agent.driver.screenshot = AsyncMock(return_value=Image.new("RGB", (100, 100)))
+
+    obstacle_ocr = [
+        make_text_element("Scan this QR code with your phone", 100, 100, 400, 30),
+    ]
+
+    with patch("magnum.intelligence.grounding.ScreenGrounder.extract_screen_text_elements", return_value=obstacle_ocr):
+        resolved = await agent._wait_for_obstacle_resolution(
+            baseline_ocr=obstacle_ocr,
+            prompt_msg="Please scan QR code",
+            max_wait_seconds=0.05,
+            poll_interval=0.01,
+        )
+        assert resolved is False
+
+
+@pytest.mark.asyncio
+async def test_agent_handles_model_obstacle_detected():
+    agent = MagnumAgent(cfg=AppConfig(default_execution_mode="desktop"))
+    agent.driver.screenshot = AsyncMock(return_value=Image.new("RGB", (100, 100)))
+    agent.driver.click = AsyncMock()
     agent.voice_engine.speak = MagicMock()
     agent.overlay.set_status = MagicMock()
 
-    qr_ocr = [
-        make_text_element("Scan the QR code to use WhatsApp", 100, 100, 400, 30),
-        make_text_element("Open WhatsApp on your phone", 100, 140, 350, 25),
+    # Step: "Open chat and focus message box"
+    step = PlanStep(step_index=1, title="Open chat and focus message box", description="Open Rishika's conversation.")
+    mock_plan = PlanChecklist(
+        goal_summary="Send message to Rishika",
+        steps=[step],
+        active_index=1,
+    )
+    agent.nim_client.generate_plan = MagicMock(return_value=mock_plan)
+
+    # Attempt 1: Model evaluates screen, detects QR obstacle, and outputs OBSTACLE_DETECTED
+    obstacle_action = GroundedAction(
+        thought="WhatsApp is not logged in and displays a QR code for mobile device pairing.",
+        action="OBSTACLE_DETECTED",
+        text="WhatsApp is not logged in. Please scan the QR code on your screen with your phone. I am waiting for you to scan it.",
+    )
+
+    # Attempt 2 (after obstacle cleared): Model sees Rishika's chat and clicks it
+    click_action = GroundedAction(
+        thought="The chat UI is now loaded. Clicking on Rishika's chat.",
+        action="CLICK",
+        target_id=5,
+        text="Rishika",
+    )
+
+    # Attempt 3: Step done
+    done_action = GroundedAction(
+        thought="Message box focused.",
+        action="STEP_DONE",
+    )
+
+    agent.nim_client.ground_step_action = MagicMock(side_effect=[
+        obstacle_action,
+        click_action,
+        done_action,
+    ])
+
+    # Screen transitions:
+    # 1. First perception -> obstacle screen
+    # 2. _wait_for_obstacle_resolution poll -> destination screen (user scanned!)
+    # 3. Post-obstacle re-perception -> destination screen
+    # 4. Attempt 2 perception -> destination screen
+    # 5. Attempt 3 perception -> destination screen
+    obstacle_elements = [make_text_element("Scan this QR code", 100, 100, 300, 30)]
+    chat_elements = [
+        make_text_element("Chats", 50, 50, 80, 30),
+        make_text_element("Search", 50, 90, 80, 30),
+        make_text_element("Rishika", 50, 140, 100, 30),
+        make_text_element("Status", 50, 180, 80, 30),
+        make_text_element("Calls", 50, 220, 80, 30),
+        make_text_element("Archived", 50, 260, 80, 30),
+        make_text_element("Settings", 50, 300, 80, 30),
     ]
 
-    with patch("magnum.intelligence.grounding.ScreenGrounder.extract_screen_text_elements", return_value=qr_ocr):
-        result = await agent._handle_login_or_qr_gate(
-            ocr_elements=qr_ocr,
-            a11y_tree=None,
-            active_app="WhatsApp",
-            screenshot=Image.new("RGB", (100, 100)),
-            max_wait_seconds=0.1,  # Short timeout for test
-        )
+    call_count = 0
+    def mock_extract(screenshot):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return obstacle_elements
+        return chat_elements
 
-        assert result is False
-        spoken_calls = [call.args[0] for call in agent.voice_engine.speak.call_args_list]
-        assert any("scan the qr code" in s.lower() for s in spoken_calls)
-        assert any("timed out" in s.lower() for s in spoken_calls)
+    with patch("magnum.intelligence.grounding.ScreenGrounder.extract_screen_text_elements", side_effect=mock_extract):
+        with patch.object(agent.overlay, "update_plan"), patch.object(agent.overlay, "set_status"), patch.object(agent.overlay, "flash"):
+            success = await agent.execute("jakar WhatsApp mein Rishika text do")
+
+            assert success is True
+            # Verify the model's voice message was spoken to the user
+            spoken_messages = [call.args[0] for call in agent.voice_engine.speak.call_args_list]
+            assert any("scan the qr code on your screen with your phone" in m.lower() for m in spoken_messages)
+            assert any("obstacle cleared" in m.lower() for m in spoken_messages)

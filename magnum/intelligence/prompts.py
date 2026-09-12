@@ -62,7 +62,7 @@ Analyze the provided screenshot and describe factually:
 1. What application or window is currently active in the foreground? (e.g. VS Code / Antigravity IDE, Google Chrome browser, Terminal, Spotify, Desktop, or Login screen).
 2. If a web browser is open: what URL or website is visible? (e.g. YouTube, Gmail, Google Search, LinkedIn, blank/new tab).
 3. What key elements or texts are visible? (e.g. Search bar, Video thumbnails, Login form, Error message, Code editor).
-4. Is there any obstacle blocking progress? (e.g. "Verify it's you", Login page, 2FA prompt, CAPTCHA, Cookie popup).
+4. Is there any obstacle blocking progress? (e.g. "Verify it's you", Login page, 2FA prompt, CAPTCHA, Cookie popup, QR code scan, or phone verification required).
 
 Be concise, factual, and strictly truthful to what is shown in the image.
 """
@@ -89,14 +89,28 @@ CRITICAL APP vs WEBSITE DISTINCTION:
 - NEVER use "NAVIGATE" for desktop apps. NEVER use "OPEN_APP" for websites.
 
 Decision Rules:
-1. Is the current step's objective ALREADY achieved on screen?
-   - Check element [1] (the menu bar app name). If it matches the target app -> the app is ALREADY OPEN -> "action": "STEP_DONE"
-   - Example: If step says "Open Antigravity" and element [1] is "Antigravity IDE" -> STEP_DONE immediately!
+1. REAL-LIFE SITUATION & OBSTACLE EVALUATION (HIGHEST PRIORITY):
+   As an autonomous agent, evaluate whether the screen presents ANY barrier requiring HUMAN physical action, authentication, or personal credentials that an automated agent cannot complete alone:
+   - QR Codes & Mobile Pairing: The application (e.g. WhatsApp, Telegram, Discord, Steam, mobile banking) requires scanning an on-screen QR code with a mobile phone.
+   - Authentication & Login Walls: Login pages, password fields, 2FA / OTP codes, SMS/email verification prompts.
+   - Bot & Security Verification: CAPTCHAs, Cloudflare "Verify you are human" challenges, puzzle sliders, robot tests.
+   - Personal Permissions & Approvals: System biometric / Touch ID prompts, administrator password dialogues, payment approvals.
+   When ANY such obstacle is present:
+   -> You MUST set "action": "OBSTACLE_DETECTED"
+   -> Set "thought": Clearly describe the exact obstacle observed on screen and why the user's manual action is needed.
+   -> Set "text": A natural, spoken voice instruction for the user telling them what is happening and what action to take (e.g. "WhatsApp is not logged in. Please scan the QR code on your screen with your phone. I am waiting for you to scan it.", or "Please complete the verification on screen so I can proceed.")
+   -> NEVER attempt to click on static QR code images, background graphics, or guess security credentials!
+
+2. Is the current step's objective ALREADY achieved on screen?
+   - Check element [1] (the menu bar app name). If it matches the target app and no sub-actions are pending -> "action": "STEP_DONE"
    - For "Navigate to Website": If elements contain the target website's text (e.g. "YouTube", "Gmail") -> "STEP_DONE" or "FINISH"
    - For "Search": If search results are visible in the elements -> "STEP_DONE"
    - For "Type in text box": If history shows we already typed the text -> "STEP_DONE"
 
-2. Available actions:
+3. Setup & Interstitial Screens:
+   - If an application presents an initial welcome/terms screen with a button like "Continue", "Get Started", or "Agree", click that button to transition into the main app or login screen.
+
+4. Available actions:
    - "CLICK": click on a UI element. Provide "target_id": ID (and optionally "text" with the element label).
    - "DOUBLE_CLICK": double click on an element. Provide "target_id": ID or "text".
    - "RIGHT_CLICK": right click on an element. Provide "target_id": ID or "text".
@@ -110,7 +124,7 @@ Decision Rules:
    - "WAIT": wait for dialog or page to load
    - "ASK_USER": ask the user a clarifying question (provide "text": "Your question?")
    - "REPORT": report findings to user (provide "text": "Summary of findings")
-   - "OBSTACLE_DETECTED": login/2FA/CAPTCHA/payment blocking progress (provide "text": "Reason", "options": ["✓ Continue", "Cancel"])
+   - "OBSTACLE_DETECTED": QR code / login / 2FA / CAPTCHA / human action required (provide "text": "Natural spoken message to user")
    - "STEP_DONE": current step is complete
    - "FINISH": entire goal is accomplished
 
@@ -119,7 +133,7 @@ Respond ONLY in valid JSON:
   "thought": "Your reasoning about the current screen state and next action",
   "action": "CLICK" | "TYPE" | "OPEN_APP" | "NAVIGATE" | "SEARCH" | "DOUBLE_CLICK" | "RIGHT_CLICK" | "PRESS_KEY" | "HOTKEY" | "SCROLL" | "WAIT" | "OBSTACLE_DETECTED" | "ASK_USER" | "REPORT" | "STEP_DONE" | "FINISH",
   "target_id": number | null,
-  "text": "text to type / URL / app name / element label / question" | null,
+  "text": "text to type / URL / app name / element label / question / spoken message" | null,
   "coordinates": {{"x": number, "y": number}} | null,
   "search_element": "exact text of search bar" | null,
   "key": "Enter" | null,

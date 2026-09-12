@@ -336,145 +336,45 @@ class MagnumAgent:
 
         return None
 
-    async def _handle_login_or_qr_gate(
+    async def _wait_for_obstacle_resolution(
         self,
-        ocr_elements: List[Any],
-        a11y_tree: Any,
-        active_app: str,
-        screenshot: Any,
+        baseline_ocr: List[Any],
+        prompt_msg: str,
         max_wait_seconds: int = 120,
+        poll_interval: float = 2.0,
     ) -> bool:
         """
-        Detects login barriers or QR code authentication gates (such as WhatsApp welcome/QR screen).
-        If a 'Continue'/'Get Started' welcome button is present, clicks it to reveal QR.
-        Speaks to user asking to scan the QR code with phone, polls visually until scan completes,
-        confirms login by voice, and resumes execution.
+        Closed-loop visual monitoring that waits for the user to resolve an on-screen obstacle
+        (e.g. scanning a QR code with a phone, entering 2FA/OTP, solving a CAPTCHA, logging in).
+        Detects real-life visual state transition when the obstacle screen is dismissed and
+        the authenticated destination UI loads.
         """
-        if not ocr_elements:
-            return False
-
-        all_text_lower = " ".join(el.text.strip().lower() for el in ocr_elements)
-        is_whatsapp = "whatsapp" in active_app.lower() or any("whatsapp" in el.text.lower() for el in ocr_elements)
-
-        chat_indicators = (
-            "chats", "unread", "type a message", "start a new chat", "status",
-            "channels", "archived", "communities", "search or start new chat"
-        )
-        has_chat_ui = any(ind in all_text_lower for ind in chat_indicators)
-
-        # 1. Check for initial Setup / Welcome screen with 'Continue' or 'Get Started' button
-        continue_btn = None
-        for el in ocr_elements:
-            clean_btn = el.text.strip().lstrip("\u200e\u200f").lower()
-            if clean_btn in ("continue", "get started", "agree and continue", "agree & continue"):
-                continue_btn = el
-                break
-
-        if not continue_btn and a11y_tree and getattr(a11y_tree, "elements", None):
-            for el in a11y_tree.elements:
-                lbl = (getattr(el, "label", "") or "").strip().lstrip("\u200e\u200f").lower()
-                if lbl in ("continue", "get started", "agree and continue", "agree & continue"):
-                    continue_btn = el
-                    break
-
-        if is_whatsapp and continue_btn and not has_chat_ui:
-            btn_name = getattr(continue_btn, "text", getattr(continue_btn, "label", "Continue")).strip()
-            console.print(f"[bold cyan]👆 Detected WhatsApp setup screen with '{btn_name}'. Clicking to reveal QR code...[/bold cyan]")
-            await self.driver.click(continue_btn.center_x, continue_btn.center_y)
-            await asyncio.sleep(2.0)
-            screenshot = await self.driver.screenshot("post_welcome_continue.png")
-            ocr_elements = ScreenGrounder.extract_screen_text_elements(screenshot)
-            all_text_lower = " ".join(el.text.strip().lower() for el in ocr_elements)
-
-        # 2. Check for QR code authentication screen
-        qr_clues = [
-            "scan the qr code",
-            "scan this code",
-            "open whatsapp on your phone",
-            "linked devices",
-            "link a device",
-            "point your phone",
-            "to use whatsapp on your computer",
-            "link with phone number",
-            "point your phone to this screen",
-            "scan the code",
-        ]
-        is_qr_gate = any(clue in all_text_lower for clue in qr_clues)
-        if not is_qr_gate:
-            if ("qr" in all_text_lower or "barcode" in all_text_lower) and any(w in all_text_lower for w in ("scan", "phone", "camera", "mobile")):
-                if not has_chat_ui:
-                    is_qr_gate = True
-
-        if not is_qr_gate:
-            return False
-
-        app_name = "WhatsApp" if (is_whatsapp or "whatsapp" in all_text_lower) else active_app
-        voice_prompt = f"{app_name} is not logged in. Please scan the QR code on your screen with your phone. I am waiting for you to scan it."
-
-        console.print(f"\n[bold yellow]════════════════════════════════════════════════════════════[/bold yellow]")
-        console.print(f"[bold yellow]📱 AUTHENTICATION / QR CODE GATE DETECTED FOR {app_name.upper()}![/bold yellow]")
-        console.print(f"[bold cyan]🗣️  Speaking to user:[/bold cyan] '{voice_prompt}'")
-        console.print(f"[bold yellow]════════════════════════════════════════════════════════════[/bold yellow]\n")
-
-        self.voice_engine.speak(voice_prompt)
-        self.overlay.set_status(f"📱 WAITING FOR {app_name.upper()} QR SCAN...")
-
-        # Record in flight recorder
-        try:
-            from magnum.logger import flight_recorder
-            flight_recorder.record_attempt(
-                step_index=0,
-                attempt_number=1,
-                active_app=app_name,
-                screenshot="qr_code_gate.png",
-                ocr_count=len(ocr_elements),
-                a11y_targets_count=len(a11y_tree.elements) if a11y_tree and a11y_tree.elements else 0,
-                ai_thought=f"Detected QR authentication gate for {app_name}. Pausing execution and asking user to scan QR with phone.",
-                chosen_action="WAIT_FOR_QR_SCAN",
-                execution_tier="Human-in-the-Loop Voice Authentication",
-                target_label="QR Code",
-                input_text=voice_prompt,
-                execution_success=True,
-                verification_confirmed=False,
-                verification_note="Waiting for user phone scan to dismiss QR screen",
-            )
-        except Exception:
-            pass
-
-        # Poll screen until QR screen is dismissed and user is authenticated
-        poll_interval = 2.0
+        baseline_texts = set(el.text.strip().lower() for el in baseline_ocr if len(el.text.strip()) > 2)
         start_time = time.time()
-        login_confirmed = False
 
         while time.time() - start_time < max_wait_seconds:
             await asyncio.sleep(poll_interval)
             try:
-                poll_screenshot = await self.driver.screenshot("qr_poll.png")
+                poll_screenshot = await self.driver.screenshot("obstacle_poll.png")
                 poll_ocr = ScreenGrounder.extract_screen_text_elements(poll_screenshot)
-                poll_text = " ".join(el.text.strip().lower() for el in poll_ocr)
+                current_texts = set(el.text.strip().lower() for el in poll_ocr if len(el.text.strip()) > 2)
 
-                qr_persists = any(clue in poll_text for clue in qr_clues)
-                if not qr_persists:
-                    chat_found = any(ind in poll_text for ind in chat_indicators)
-                    if chat_found or len(poll_ocr) >= 12:
-                        login_confirmed = True
-                        break
+                if baseline_texts:
+                    still_present = baseline_texts.intersection(current_texts)
+                    overlap_ratio = len(still_present) / len(baseline_texts)
+                    new_elements_count = len(current_texts - baseline_texts)
+
+                    # State transition: obstacle texts cleared (<45% overlap) OR significant new UI loaded (>6 new elements)
+                    if overlap_ratio < 0.45 or (new_elements_count >= 6 and overlap_ratio < 0.75):
+                        logger.info(f"Visual state change detected! Overlap={overlap_ratio:.2f}, NewElements={new_elements_count}")
+                        return True
+                else:
+                    if len(current_texts) >= 5:
+                        return True
             except Exception as e:
-                logger.debug(f"Error polling QR screen: {e}")
+                logger.debug(f"Error in obstacle polling: {e}")
 
-        if login_confirmed:
-            confirm_msg = "Login confirmed. Continuing."
-            console.print(f"[bold green]✅ QR code scan detected! {app_name} is now logged in.[/bold green]")
-            self.voice_engine.speak(confirm_msg)
-            self.overlay.set_status(f"✅ {app_name.upper()} LOGGED IN")
-            await asyncio.sleep(1.0)
-            return True
-        else:
-            timeout_msg = f"{app_name} QR scan timed out. Please scan the QR code and try again."
-            console.print(f"[bold red]❌ QR code scan wait timed out after {max_wait_seconds}s.[/bold red]")
-            self.voice_engine.speak(timeout_msg)
-            self.overlay.set_status("❌ QR SCAN TIMED OUT")
-            return False
+        return False
 
     async def process_instruction(self, instruction: str, is_workflow_step: bool = False) -> bool:
         """
@@ -1680,41 +1580,6 @@ class MagnumAgent:
                     )
                     log_perception(active_app, element_count, len(a11y_tree.elements))
 
-                    # Check for login / QR code obstacle (e.g. WhatsApp QR setup gate)
-                    auth_resolved = await self._handle_login_or_qr_gate(
-                        ocr_elements=ocr_elements,
-                        a11y_tree=a11y_tree,
-                        active_app=active_app,
-                        screenshot=screenshot,
-                    )
-                    if auth_resolved:
-                        await asyncio.sleep(1.0)
-                        screenshot = await self.driver.screenshot(
-                            f"step_{current_step.step_index}_post_auth.png"
-                        )
-                        ocr_elements = ScreenGrounder.extract_screen_text_elements(screenshot)
-                        element_count = len(ocr_elements)
-                        try:
-                            frontmost = MacOSAccessibilityDriver.get_frontmost_app()
-                            if frontmost and frontmost.get("name"):
-                                active_app = frontmost["name"]
-                        except Exception:
-                            pass
-                        a11y_tree = A11yEngine.build_tree(
-                            image=screenshot,
-                            active_app=active_app,
-                            browser_controller=browser_ctrl,
-                            ocr_elements=ocr_elements,
-                        )
-                        log_perception(active_app, element_count, len(a11y_tree.elements))
-
-                        # If this step was solely to open/launch the app, it is now completed
-                        if any(current_step.title.lower().startswith(p) for p in ("open ", "launch ", "switch to ", "focus ")) and not any(sub in current_step.title.lower() for sub in ("search", "chat", "message", "text", "send", "type")):
-                            console.print(f"[bold green]✓ '{active_app}' is open and authenticated![/bold green]")
-                            history.append(f"Step {current_step.step_index}: AUTH_COMPLETED - {active_app} logged in")
-                            step_completed = True
-                            break
-
                     # Astra Set-of-Marks visual overlay
                     if a11y_tree.elements:
                         som_screenshot = ScreenGrounder.annotate_a11y_tree(screenshot, a11y_tree)
@@ -1733,6 +1598,7 @@ class MagnumAgent:
 
                     # Pre-flight: detect if step is already done
                     if ocr_elements and step_attempts == 1:
+                        step_lower = (current_step.title + " " + current_step.description).lower()
                         top_bar_texts = [el.text.strip().lower() for el in ocr_elements if el.top < 50]
                         frontmost_app = ocr_elements[0].text.strip().lower()
 
@@ -1907,17 +1773,51 @@ class MagnumAgent:
                         break
 
                     elif act_type == "OBSTACLE_DETECTED":
-                        console.print(f"[bold yellow]🔐 Obstacle:[/bold yellow] {action_data.text}")
-                        self.overlay.set_status("🔐 AUTH REQUIRED")
-                        decision = await self.hitl_handler.confirm_comment_async(
-                            draft_comment=action_data.text or "Please sign in.",
-                            author="Authentication Required",
-                            post_summary="Login Obstacle",
+                        obstacle_msg = action_data.text or "An obstacle on screen requires your attention. Please check your screen."
+                        console.print(f"\n[bold yellow]════════════════════════════════════════════════════════════[/bold yellow]")
+                        console.print(f"[bold yellow]🔐 OBSTACLE DETECTED BY MODEL:[/bold yellow] {action_data.thought}")
+                        console.print(f"[bold cyan]🗣️  Speaking to user:[/bold cyan] '{obstacle_msg}'")
+                        console.print(f"[bold yellow]════════════════════════════════════════════════════════════[/bold yellow]\n")
+
+                        self.voice_engine.speak(obstacle_msg)
+                        self.overlay.set_status(f"⚠️ {obstacle_msg[:35].upper()}...")
+
+                        # Closed-loop visual monitoring: wait until user resolves obstacle on screen
+                        resolved = await self._wait_for_obstacle_resolution(
+                            baseline_ocr=ocr_elements,
+                            prompt_msg=obstacle_msg,
+                            max_wait_seconds=120,
                         )
-                        if decision.action == HitlActionType.APPROVE:
-                            await asyncio.sleep(2.0)
+                        if resolved:
+                            confirm_msg = "Obstacle cleared. Continuing with your task."
+                            self.voice_engine.speak(confirm_msg)
+                            console.print("[bold green]✅ Visual state change confirmed! Resuming execution...[/bold green]")
+                            self.overlay.set_status("RESUMING TASK")
+                            await asyncio.sleep(1.0)
+                            # Re-perceive the new screen state
+                            screenshot = await self.driver.screenshot(f"step_{current_step.step_index}_post_obstacle.png")
+                            ocr_elements = ScreenGrounder.extract_screen_text_elements(screenshot)
+                            element_count = len(ocr_elements)
+                            try:
+                                from magnum.driver.macos_ax import MacOSAccessibilityDriver
+                                frontmost = MacOSAccessibilityDriver.get_frontmost_app()
+                                if frontmost and frontmost.get("name"):
+                                    active_app = frontmost["name"]
+                            except Exception:
+                                pass
+                            a11y_tree = A11yEngine.build_tree(
+                                image=screenshot,
+                                active_app=active_app,
+                                browser_controller=browser_ctrl,
+                                ocr_elements=ocr_elements,
+                            )
+                            log_perception(active_app, element_count, len(a11y_tree.elements))
+                            continue
                         else:
-                            return False
+                            console.print(f"[bold red]❌ Obstacle wait timed out after 120s[/bold red]")
+                            self.voice_engine.speak("Wait timed out. Please try again.")
+                            step_completed = False
+                            break
 
                     elif act_type == "ASK_USER":
                         draft_text = action_data.text or action_data.thought

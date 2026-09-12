@@ -303,9 +303,21 @@ class NimClient:
             or "two-factor" in lower
             or "2fa" in lower
             or "captcha" in lower
+            or "qr code" in lower
+            or "scan qr" in lower
+            or "scan the qr" in lower
+            or "scan this code" in lower
+            or "obstacle" in lower
         ):
             action = "OBSTACLE_DETECTED"
-            text_val = "Authentication / Google Identity verification required on screen. Please sign in to continue."
+            # Extract natural message from text if present, or generic prompt
+            m_quote = re.search(r"[\"']([^\"']*(?:scan|login|sign in|verify|password|code|phone)[^\"']*)[\"']", raw_text, re.IGNORECASE)
+            if m_quote:
+                text_val = m_quote.group(1).strip()
+            elif "qr" in lower:
+                text_val = "A QR code scan is required on your screen. Please scan it with your phone."
+            else:
+                text_val = "Authentication or verification is required on your screen. Please complete it to continue."
         elif "search" in lower or "search bar" in lower or "find messages" in lower:
             action = "SEARCH"
             q_match = re.search(r"(?:search for|query|find messages from|into the search bar)\s+[\"']?([^\"'\n\.,]+)[\"']?", raw_text, re.IGNORECASE)
