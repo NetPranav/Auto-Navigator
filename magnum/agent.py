@@ -1455,494 +1455,496 @@ class MagnumAgent:
                 last_action_key = ""  # Track last action to detect repeats
                 actions_performed = []  # Track what we've done this step
 
-            while step_attempts < max_step_attempts and not step_completed:
-                step_attempts += 1
+                while step_attempts < max_step_attempts and not step_completed:
+                    step_attempts += 1
 
-                screenshot = await self.driver.screenshot(
-                    f"step_{current_step.step_index}_attempt_{step_attempts}.png"
-                )
-                screenshot_b64 = NimClient.pil_to_base64(screenshot)
+                    screenshot = await self.driver.screenshot(
+                        f"step_{current_step.step_index}_attempt_{step_attempts}.png"
+                    )
+                    screenshot_b64 = NimClient.pil_to_base64(screenshot)
 
-                # OCR & Astra a11y Tree Extraction
-                ocr_elements = ScreenGrounder.extract_screen_text_elements(screenshot)
-                element_count = len(ocr_elements)
+                    # OCR & Astra a11y Tree Extraction
+                    ocr_elements = ScreenGrounder.extract_screen_text_elements(screenshot)
+                    element_count = len(ocr_elements)
 
-                from magnum.intelligence.a11y_tree import A11yEngine
-                from magnum.browser import get_browser_controller
-                browser_ctrl = get_browser_controller()
+                    from magnum.intelligence.a11y_tree import A11yEngine
+                    from magnum.browser import get_browser_controller
+                    browser_ctrl = get_browser_controller()
 
-                active_app = "Desktop"
-                try:
-                    from magnum.driver.macos_ax import MacOSAccessibilityDriver
-                    frontmost = MacOSAccessibilityDriver.get_frontmost_app()
-                    if frontmost and frontmost.get("name"):
-                        active_app = frontmost["name"]
-                except Exception:
-                    pass
-                if active_app == "Desktop" and ocr_elements:
-                    active_app = ocr_elements[0].text.strip()
-                a11y_tree = A11yEngine.build_tree(
-                    image=screenshot,
-                    active_app=active_app,
-                    browser_controller=browser_ctrl,
-                    ocr_elements=ocr_elements,
-                )
-                log_perception(active_app, element_count, len(a11y_tree.elements))
+                    active_app = "Desktop"
+                    try:
+                        from magnum.driver.macos_ax import MacOSAccessibilityDriver
+                        frontmost = MacOSAccessibilityDriver.get_frontmost_app()
+                        if frontmost and frontmost.get("name"):
+                            active_app = frontmost["name"]
+                    except Exception:
+                        pass
+                    if active_app == "Desktop" and ocr_elements:
+                        active_app = ocr_elements[0].text.strip()
+                    a11y_tree = A11yEngine.build_tree(
+                        image=screenshot,
+                        active_app=active_app,
+                        browser_controller=browser_ctrl,
+                        ocr_elements=ocr_elements,
+                    )
+                    log_perception(active_app, element_count, len(a11y_tree.elements))
 
-                # Astra Set-of-Marks visual overlay
-                if a11y_tree.elements:
-                    som_screenshot = ScreenGrounder.annotate_a11y_tree(screenshot, a11y_tree)
-                    screenshot_b64 = NimClient.pil_to_base64(som_screenshot)
-                    console.print(f"[dim]⚡ Astra a11y tree: {len(a11y_tree.elements)} interactive elements indexed[/dim]")
-                else:
-                    console.print(f"[dim]🔍 OCR: {element_count} elements (Attempt {step_attempts})[/dim]")
-                if element_count > 0 and not a11y_tree.elements:
-                    for i, el in enumerate(ocr_elements[:12], start=1):
-                        text_display = el.text.strip()
-                        if len(text_display) > 50:
-                            text_display = text_display[:47] + "..."
-                        console.print(f"[dim]  [{i}] \"{text_display}\" at ({el.center_x:.0f}, {el.center_y:.0f})[/dim]")
-                    if element_count > 12:
-                        console.print(f"[dim]  ... and {element_count - 12} more[/dim]")
+                    # Astra Set-of-Marks visual overlay
+                    if a11y_tree.elements:
+                        som_screenshot = ScreenGrounder.annotate_a11y_tree(screenshot, a11y_tree)
+                        screenshot_b64 = NimClient.pil_to_base64(som_screenshot)
+                        console.print(f"[dim]⚡ Astra a11y tree: {len(a11y_tree.elements)} interactive elements indexed[/dim]")
+                    else:
+                        console.print(f"[dim]🔍 OCR: {element_count} elements (Attempt {step_attempts})[/dim]")
+                    if element_count > 0 and not a11y_tree.elements:
+                        for i, el in enumerate(ocr_elements[:12], start=1):
+                            text_display = el.text.strip()
+                            if len(text_display) > 50:
+                                text_display = text_display[:47] + "..."
+                            console.print(f"[dim]  [{i}] \"{text_display}\" at ({el.center_x:.0f}, {el.center_y:.0f})[/dim]")
+                        if element_count > 12:
+                            console.print(f"[dim]  ... and {element_count - 12} more[/dim]")
 
-                # Pre-flight: detect if step is already done
-                if ocr_elements and step_attempts == 1:
-                    step_lower = (current_step.title + " " + current_step.description).lower()
-                    top_bar_texts = [el.text.strip().lower() for el in ocr_elements if el.top < 50]
-                    frontmost_app = ocr_elements[0].text.strip().lower()
+                    # Pre-flight: detect if step is already done
+                    if ocr_elements and step_attempts == 1:
+                        step_lower = (current_step.title + " " + current_step.description).lower()
+                        top_bar_texts = [el.text.strip().lower() for el in ocr_elements if el.top < 50]
+                        frontmost_app = ocr_elements[0].text.strip().lower()
 
-                    desktop_apps = [
-                        "antigravity", "vs code", "visual studio code", "xcode",
-                        "terminal", "finder", "spotify", "discord", "slack",
-                        "notes", "textedit", "preview", "system settings",
-                        "safari", "google chrome", "chrome", "firefox", "arc",
-                        "iterm", "warp", "sublime", "atom", "intellij",
-                    ]
+                        desktop_apps = [
+                            "antigravity", "vs code", "visual studio code", "xcode",
+                            "terminal", "finder", "spotify", "discord", "slack",
+                            "notes", "textedit", "preview", "system settings",
+                            "safari", "google chrome", "chrome", "firefox", "arc",
+                            "iterm", "warp", "sublime", "atom", "intellij",
+                        ]
 
-                    if any(kw in step_lower for kw in ["open", "launch", "navigate to", "switch to", "focus"]):
-                        # 1. Check if target app is visible anywhere in top menu bar (top < 50)
-                        for app in desktop_apps:
-                            if app in step_lower and any(app in t for t in top_bar_texts):
-                                console.print(f"[bold green]✓ '{app.title()}' is already visible/active on screen — skipping open step![/bold green]")
-                                history.append(f"Step {current_step.step_index}: AUTO_SKIP - App active on screen: {app}")
-                                step_completed = True
-                                break
-
-                        # 2. Check frontmost app
-                        if not step_completed:
+                        if any(kw in step_lower for kw in ["open", "launch", "navigate to", "switch to", "focus"]):
+                            # 1. Check if target app is visible anywhere in top menu bar (top < 50)
                             for app in desktop_apps:
-                                if app in step_lower and app in frontmost_app:
-                                    console.print(f"[bold green]✓ '{ocr_elements[0].text.strip()}' is already active — skipping![/bold green]")
-                                    history.append(f"Step {current_step.step_index}: AUTO_SKIP - App active: {ocr_elements[0].text.strip()}")
-                                    step_completed = True
-                                    break
-                        if not step_completed:
-                            for word in frontmost_app.split():
-                                if len(word) > 3 and word in step_lower:
-                                    console.print(f"[bold green]✓ '{ocr_elements[0].text.strip()}' matches — skipping![/bold green]")
-                                    history.append(f"Step {current_step.step_index}: AUTO_SKIP - App active: {ocr_elements[0].text.strip()}")
+                                if app in step_lower and any(app in t for t in top_bar_texts):
+                                    console.print(f"[bold green]✓ '{app.title()}' is already visible/active on screen — skipping open step![/bold green]")
+                                    history.append(f"Step {current_step.step_index}: AUTO_SKIP - App active on screen: {app}")
                                     step_completed = True
                                     break
 
-                    # Check if this checklist step is a continuous background watcher step
-                    if any(kw in step_lower for kw in ("watch and click", "watch for", "repeating until", "again and again", "until instructed to stop", "until i tell you to stop")):
-                        target = self._clean_watcher_target(step_lower)
-                        console.print(f"[bold green]👁️ Step is a continuous watcher: starting persistent background watcher for '{target}'...[/bold green]")
-                        await self._start_watcher(instruction, {
-                            "watch_for": target,
-                            "action": "CLICK",
-                            "stop_when": None,
-                            "poll_interval": self.config.watcher_poll_interval,
-                        })
-                        history.append(f"Step {current_step.step_index}: Launched persistent background watcher for '{target}'")
-                        step_completed = True
-                        break
+                            # 2. Check frontmost app
+                            if not step_completed:
+                                for app in desktop_apps:
+                                    if app in step_lower and app in frontmost_app:
+                                        console.print(f"[bold green]✓ '{ocr_elements[0].text.strip()}' is already active — skipping![/bold green]")
+                                        history.append(f"Step {current_step.step_index}: AUTO_SKIP - App active: {ocr_elements[0].text.strip()}")
+                                        step_completed = True
+                                        break
+                            if not step_completed:
+                                for word in frontmost_app.split():
+                                    if len(word) > 3 and word in step_lower:
+                                        console.print(f"[bold green]✓ '{ocr_elements[0].text.strip()}' matches — skipping![/bold green]")
+                                        history.append(f"Step {current_step.step_index}: AUTO_SKIP - App active: {ocr_elements[0].text.strip()}")
+                                        step_completed = True
+                                        break
 
-                    # Check if this checklist step is an internal workflow recording step
-                    if any(kw in step_lower for kw in ("record custom workflow", "record workflow", "create workflow", "start workflow", "interactive voice workflow")):
-                        console.print(f"[bold green]🎙️ Step is an internal workflow tool: launching interactive workflow recorder...[/bold green]")
-                        return await self._interactive_create_workflow()
-
-                if step_completed:
-                    break
-
-                # Reasoning model
-                console.print(f"[dim]🧠 Reasoning...[/dim]")
-                action_data: GroundedAction = self.nim_client.ground_step_action(
-                    screenshot_base64=screenshot_b64,
-                    goal=instruction,
-                    current_step=current_step,
-                    total_steps=total_steps,
-                    history=history,
-                    ocr_elements=ocr_elements,
-                    a11y_tree=a11y_tree,
-                )
-
-                console.print(f"[bold cyan]🧠 Thought:[/bold cyan] {action_data.thought}")
-                console.print(f"[bold yellow]⚡ Action:[/bold yellow] [bold]{action_data.action}[/bold]")
-                if action_data.text:
-                    console.print(f"[dim]   Target: \"{action_data.text}\"[/dim]")
-
-                act_type = action_data.action.upper()
-
-                # ── ACTION DEDUPLICATION ──
-                # If the model suggests the exact same action+target as last time,
-                # it means the action already succeeded → auto-advance
-                current_action_key = f"{act_type}:{action_data.text or ''}"
-                if current_action_key == last_action_key and act_type in ("CLICK", "DOUBLE_CLICK", "TYPE", "PRESS_KEY"):
-                    console.print(f"[bold green]✓ Action '{act_type}' already performed — advancing to next step![/bold green]")
-                    step_completed = True
-                    break
-                last_action_key = current_action_key
-
-                # ── POST-TYPE VERIFICATION ──
-                # If we typed text in a previous attempt, check if it's now on screen
-                typed_texts = [a[1] for a in actions_performed if a[0] == "TYPE"]
-                if typed_texts and act_type == "TYPE" and action_data.text:
-                    # Check if previous typed text is now visible on screen
-                    for prev_typed in typed_texts:
-                        for el in ocr_elements:
-                            if prev_typed.lower() in el.text.strip().lower():
-                                console.print(f"[bold green]✓ Text '{prev_typed}' already on screen — step done![/bold green]")
-                                step_completed = True
-                                break
-                        if step_completed:
+                        # Check if this checklist step is a continuous background watcher step
+                        if any(kw in step_lower for kw in ("watch and click", "watch for", "repeating until", "again and again", "until instructed to stop", "until i tell you to stop")):
+                            target = self._clean_watcher_target(step_lower)
+                            console.print(f"[bold green]👁️ Step is a continuous watcher: starting persistent background watcher for '{target}'...[/bold green]")
+                            await self._start_watcher(instruction, {
+                                "watch_for": target,
+                                "action": "CLICK",
+                                "stop_when": None,
+                                "poll_interval": self.config.watcher_poll_interval,
+                            })
+                            history.append(f"Step {current_step.step_index}: Launched persistent background watcher for '{target}'")
+                            step_completed = True
                             break
+
+                        # Check if this checklist step is an internal workflow recording step
+                        if any(kw in step_lower for kw in ("record custom workflow", "record workflow", "create workflow", "start workflow", "interactive voice workflow")):
+                            console.print(f"[bold green]🎙️ Step is an internal workflow tool: launching interactive workflow recorder...[/bold green]")
+                            return await self._interactive_create_workflow()
+
                     if step_completed:
                         break
 
-                if step_attempts >= 3 and "search" in current_step.title.lower():
-                    query = action_data.text or "search query"
-                    console.print(f"[bold green]🔍 Auto-search: '{query}'[/bold green]")
-                    await self.driver.click(640.0, 130.0)
-                    await asyncio.sleep(0.2)
-                    await self.driver.hotkey("command", "a")
-                    await self.driver.type_text(query)
-                    await self.driver.press_key("return")
-                    await asyncio.sleep(2.0)
-                    step_completed = True
-                    break
+                    # Reasoning model
+                    console.print(f"[dim]🧠 Reasoning...[/dim]")
+                    action_data: GroundedAction = self.nim_client.ground_step_action(
+                        screenshot_base64=screenshot_b64,
+                        goal=instruction,
+                        current_step=current_step,
+                        total_steps=total_steps,
+                        history=history,
+                        ocr_elements=ocr_elements,
+                        a11y_tree=a11y_tree,
+                    )
 
-                if act_type == "FINISH":
-                    step_completed = True
-                    plan.active_index = total_steps + 1
-                    break
+                    console.print(f"[bold cyan]🧠 Thought:[/bold cyan] {action_data.thought}")
+                    console.print(f"[bold yellow]⚡ Action:[/bold yellow] [bold]{action_data.action}[/bold]")
+                    if action_data.text:
+                        console.print(f"[dim]   Target: \"{action_data.text}\"[/dim]")
 
-                elif act_type == "STEP_DONE":
-                    console.print(f"[bold green]✓ Step {current_step.step_index} done![/bold green]")
-                    step_completed = True
-                    break
+                    act_type = action_data.action.upper()
 
-                elif act_type == "OPEN_APP":
-                    app_name = action_data.text or "Google Chrome"
-                    already_open = False
-                    if ocr_elements:
-                        frontmost = ocr_elements[0].text.strip().lower()
-                        app_lower = app_name.lower()
-                        if app_lower in frontmost or frontmost in app_lower or any(w in frontmost for w in app_lower.split()):
-                            already_open = True
-                            console.print(f"[bold green]✓ '{app_name}' already active[/bold green]")
-                            step_completed = True
+                    # ── ACTION DEDUPLICATION ──
+                    # If the model suggests the exact same action+target as last time,
+                    # it means the action already succeeded → auto-advance
+                    current_action_key = f"{act_type}:{action_data.text or ''}"
+                    if current_action_key == last_action_key and act_type in ("CLICK", "DOUBLE_CLICK", "TYPE", "PRESS_KEY"):
+                        console.print(f"[bold green]✓ Action '{act_type}' already performed — advancing to next step![/bold green]")
+                        step_completed = True
+                        break
+                    last_action_key = current_action_key
+
+                    # ── POST-TYPE VERIFICATION ──
+                    # If we typed text in a previous attempt, check if it's now on screen
+                    typed_texts = [a[1] for a in actions_performed if a[0] == "TYPE"]
+                    if typed_texts and act_type == "TYPE" and action_data.text:
+                        # Check if previous typed text is now visible on screen
+                        for prev_typed in typed_texts:
+                            for el in ocr_elements:
+                                if prev_typed.lower() in el.text.strip().lower():
+                                    console.print(f"[bold green]✓ Text '{prev_typed}' already on screen — step done![/bold green]")
+                                    step_completed = True
+                                    break
+                            if step_completed:
+                                break
+                        if step_completed:
                             break
-                    if not already_open:
-                        console.print(f"[bold green]🚀 Opening: {app_name}[/bold green]")
-                        await self.driver.navigate(app_name)
-                        await asyncio.sleep(2.0)
 
-                elif act_type == "NAVIGATE":
-                    target = action_data.text or "https://google.com"
-                    if not target.startswith("http") and (" " in target or "." not in target):
-                        console.print(f"[bold green]🔍 Searching: '{target}'[/bold green]")
+                    if step_attempts >= 3 and "search" in current_step.title.lower():
+                        query = action_data.text or "search query"
+                        console.print(f"[bold green]🔍 Auto-search: '{query}'[/bold green]")
                         await self.driver.click(640.0, 130.0)
+                        await asyncio.sleep(0.2)
                         await self.driver.hotkey("command", "a")
-                        await self.driver.type_text(target)
+                        await self.driver.type_text(query)
                         await self.driver.press_key("return")
                         await asyncio.sleep(2.0)
-                    else:
-                        console.print(f"[bold green]🌐 Navigating: {target}[/bold green]")
-                        await self.driver.navigate(target)
-                        await asyncio.sleep(2.0)
+                        step_completed = True
+                        break
 
-                elif act_type == "SEARCH":
-                    query = action_data.text or "search query"
-                    console.print(f"[bold green]🔍 Searching: '{query}'[/bold green]")
-                    self.overlay.set_status(f"SEARCHING: {query.upper()}")
+                    if act_type == "FINISH":
+                        step_completed = True
+                        plan.active_index = total_steps + 1
+                        break
+
+                    elif act_type == "STEP_DONE":
+                        console.print(f"[bold green]✓ Step {current_step.step_index} done![/bold green]")
+                        step_completed = True
+                        break
+
+                    elif act_type == "OPEN_APP":
+                        app_name = action_data.text or "Google Chrome"
+                        already_open = False
+                        if ocr_elements:
+                            frontmost = ocr_elements[0].text.strip().lower()
+                            app_lower = app_name.lower()
+                            if app_lower in frontmost or frontmost in app_lower or any(w in frontmost for w in app_lower.split()):
+                                already_open = True
+                                console.print(f"[bold green]✓ '{app_name}' already active[/bold green]")
+                                step_completed = True
+                                break
+                        if not already_open:
+                            console.print(f"[bold green]🚀 Opening: {app_name}[/bold green]")
+                            await self.driver.navigate(app_name)
+                            await asyncio.sleep(2.0)
+                            step_completed = True
+                            break
+
+                    elif act_type == "NAVIGATE":
+                        target = action_data.text or "https://google.com"
+                        if not target.startswith("http") and (" " in target or "." not in target):
+                            console.print(f"[bold green]🔍 Searching: '{target}'[/bold green]")
+                            await self.driver.click(640.0, 130.0)
+                            await self.driver.hotkey("command", "a")
+                            await self.driver.type_text(target)
+                            await self.driver.press_key("return")
+                            await asyncio.sleep(2.0)
+                        else:
+                            console.print(f"[bold green]🌐 Navigating: {target}[/bold green]")
+                            await self.driver.navigate(target)
+                            await asyncio.sleep(2.0)
+
+                    elif act_type == "SEARCH":
+                        query = action_data.text or "search query"
+                        console.print(f"[bold green]🔍 Searching: '{query}'[/bold green]")
+                        self.overlay.set_status(f"SEARCHING: {query.upper()}")
                     
-                    search_el_text = action_data.search_element
-                    sx, sy = 640.0, 130.0
-                    if search_el_text:
-                        coords = ScreenGrounder.find_element_by_text(screenshot, search_el_text)
-                        if coords:
-                            sx, sy = coords
-                    elif action_data.coordinates:
-                        sx = action_data.coordinates.get("x", 640.0)
-                        sy = action_data.coordinates.get("y", 130.0)
+                        search_el_text = action_data.search_element
+                        sx, sy = 640.0, 130.0
+                        if search_el_text:
+                            coords = ScreenGrounder.find_element_by_text(screenshot, search_el_text)
+                            if coords:
+                                sx, sy = coords
+                        elif action_data.coordinates:
+                            sx = action_data.coordinates.get("x", 640.0)
+                            sy = action_data.coordinates.get("y", 130.0)
                     
-                    await self.driver.click(sx, sy)
-                    await asyncio.sleep(0.3)
-                    await self.driver.hotkey("command", "a")
-                    await asyncio.sleep(0.1)
-                    await self.driver.type_text(query)
-                    await asyncio.sleep(0.2)
-                    await self.driver.press_key("return")
-                    await asyncio.sleep(2.5)
+                        await self.driver.click(sx, sy)
+                        await asyncio.sleep(0.3)
+                        await self.driver.hotkey("command", "a")
+                        await asyncio.sleep(0.1)
+                        await self.driver.type_text(query)
+                        await asyncio.sleep(0.2)
+                        await self.driver.press_key("return")
+                        await asyncio.sleep(2.5)
 
-                elif act_type in ("REPORT", "READ"):
-                    findings = action_data.text or action_data.thought
-                    console.print(f"\n[bold green]📊 FINDINGS:[/bold green]\n{findings}\n")
-                    self.overlay.set_status("FINDINGS READY")
-                    await self.hitl_handler.confirm_comment_async(
-                        draft_comment=findings,
-                        author="Search Results",
-                        post_summary=instruction,
-                    )
-                    step_completed = True
-                    plan.active_index = total_steps + 1
-                    break
+                    elif act_type in ("REPORT", "READ"):
+                        findings = action_data.text or action_data.thought
+                        console.print(f"\n[bold green]📊 FINDINGS:[/bold green]\n{findings}\n")
+                        self.overlay.set_status("FINDINGS READY")
+                        await self.hitl_handler.confirm_comment_async(
+                            draft_comment=findings,
+                            author="Search Results",
+                            post_summary=instruction,
+                        )
+                        step_completed = True
+                        plan.active_index = total_steps + 1
+                        break
 
-                elif act_type == "OBSTACLE_DETECTED":
-                    console.print(f"[bold yellow]🔐 Obstacle:[/bold yellow] {action_data.text}")
-                    self.overlay.set_status("🔐 AUTH REQUIRED")
-                    decision = await self.hitl_handler.confirm_comment_async(
-                        draft_comment=action_data.text or "Please sign in.",
-                        author="Authentication Required",
-                        post_summary="Login Obstacle",
-                    )
-                    if decision.action == HitlActionType.APPROVE:
-                        await asyncio.sleep(2.0)
-                    else:
-                        return False
-
-                elif act_type == "ASK_USER":
-                    draft_text = action_data.text or action_data.thought
-                    options = action_data.options
-                    if options and any("approve" in o.lower() or "post" in o.lower() for o in options):
+                    elif act_type == "OBSTACLE_DETECTED":
+                        console.print(f"[bold yellow]🔐 Obstacle:[/bold yellow] {action_data.text}")
+                        self.overlay.set_status("🔐 AUTH REQUIRED")
                         decision = await self.hitl_handler.confirm_comment_async(
-                            draft_comment=draft_text, author=current_step.title, post_summary=instruction,
+                            draft_comment=action_data.text or "Please sign in.",
+                            author="Authentication Required",
+                            post_summary="Login Obstacle",
                         )
                         if decision.action == HitlActionType.APPROVE:
-                            step_completed = True
+                            await asyncio.sleep(2.0)
                         else:
                             return False
-                    else:
-                        user_ans = await self.hitl_handler.ask_user_text_async(draft_text)
-                        console.print(f"[bold green]✓ User: '{user_ans}'[/bold green]")
-                        history.append(f"Agent Asked: {draft_text} | User: {user_ans}")
 
-                        # Store in persistent memory & knowledge
-                        from magnum.intelligence.memory import get_memory
-                        mem = get_memory()
-                        mem.learn_user_rule(f"When asked '{draft_text}', user answered: '{user_ans}'")
-                        if "antigravity" in draft_text.lower() or "antigravity" in user_ans.lower():
-                            mem.learn_app_mapping("antigravity", "Antigravity IDE")
-                            mem.learn_user_rule("Antigravity is already open and focused in the current workspace.")
-                        await asyncio.sleep(1.0)
-
-                elif act_type in ("CLICK", "DOUBLE_CLICK", "RIGHT_CLICK"):
-                    x, y = 0.0, 0.0
-                    target_id = action_data.target_id
-                    target_el = a11y_tree.get_element_by_id(target_id) if (target_id and a11y_tree) else None
-
-                    # ── MULTI-TIER EXECUTION CASCADE ──
-                    # Tier 1: Browser DOM dispatch (Chrome/Safari)
-                    handled = False
-                    if target_id and target_el and target_el.source == "browser_dom":
-                        handled = browser_ctrl.click_element_by_id(target_id)
-                        if handled:
-                            console.print(f"[bold green]⚡ Astra DOM Click: [{target_id}] '{target_el.label}'[/bold green]")
-
-                    # Tier 2: Open Computer Use (OCU / Codex) Engine Bridge
-                    if not handled and target_id:
-                        try:
-                            from magnum.driver.open_computer_use_bridge import OpenComputerUseBridge
-                            if OpenComputerUseBridge.is_available():
-                                handled = OpenComputerUseBridge.click(app=active_app, element_index=str(target_id))
-                                if handled:
-                                    console.print(f"[bold green]👾 Open-Computer-Use Click: [{target_id}] in {active_app}[/bold green]")
-                        except Exception as e:
-                            logger.debug(f"OpenComputerUseBridge click error: {e}")
-
-                    # Tier 3: Native macOS AXUIElement dispatch (Finder, Settings, Antigravity, etc.)
-                    if not handled and target_id and target_el and target_el.source == "macos_ax" and target_el.native_element:
-                        try:
-                            from magnum.driver.macos_ax import MacOSAccessibilityDriver
-                            handled = MacOSAccessibilityDriver.press_ax_element(target_el.native_element)
-                            if handled:
-                                console.print(f"[bold green]🍏 Astra Native AX Press: [{target_id}] '{target_el.label}'[/bold green]")
-                        except Exception as e:
-                            logger.debug(f"Native AX click error: {e}")
-
-                    # Tier 4: Physical mouse click fallback
-                    if not handled:
-                        if target_el:
-                            x, y = target_el.center_x, target_el.center_y
-                            console.print(f"[bold green]🎯 Astra Target [{target_id}]: '{target_el.label}' → ({x:.0f}, {y:.0f})[/bold green]")
-                        elif action_data.text:
-                            exact = ScreenGrounder.find_element_by_text(screenshot, action_data.text)
-                            if exact:
-                                x, y = exact
-                                console.print(f"[bold green]🎯 OCR: '{action_data.text}' → ({x:.0f}, {y:.0f})[/bold green]")
-                            else:
-                                console.print(f"[bold yellow]⚠️ OCR can't find '{action_data.text}'[/bold yellow]")
-
-                        if x == 0.0 and y == 0.0 and action_data.coordinates:
-                            x = action_data.coordinates.get("x", 0.0)
-                            y = action_data.coordinates.get("y", 0.0)
-
-                        if x == 0.0 and y == 0.0:
-                            console.print(f"[bold red]❌ Cannot resolve click target[/bold red]")
-                        else:
-                            if act_type == "CLICK":
-                                await self.driver.click(x, y)
-                            elif act_type == "DOUBLE_CLICK":
-                                await self.driver.double_click(x, y)
-                            elif act_type == "RIGHT_CLICK":
-                                await self.driver.right_click(x, y)
-
-                elif act_type == "TYPE" and action_data.text:
-                    t = action_data.text
-                    target_id = action_data.target_id
-                    target_el = a11y_tree.get_element_by_id(target_id) if (target_id and a11y_tree) else None
-
-                    # ── MULTI-TIER TYPE CASCADE ──
-                    # Tier 1: Browser DOM type
-                    typed = False
-                    if target_id and target_el and target_el.source == "browser_dom":
-                        typed = browser_ctrl.type_element_by_id(target_id, t)
-                        if typed:
-                            console.print(f"[bold green]⚡ Astra DOM Type into [{target_id}]: '{t[:60]}'[/bold green]")
-
-                    # Tier 2: Open Computer Use (OCU / Codex) Engine Bridge
-                    if not typed and target_id:
-                        try:
-                            from magnum.driver.open_computer_use_bridge import OpenComputerUseBridge
-                            if OpenComputerUseBridge.is_available():
-                                typed = OpenComputerUseBridge.set_value(app=active_app, element_index=str(target_id), value=t)
-                                if typed:
-                                    console.print(f"[bold green]👾 Open-Computer-Use Set Value: [{target_id}] in {active_app}[/bold green]")
-                        except Exception as e:
-                            logger.debug(f"OpenComputerUseBridge set_value error: {e}")
-
-                    # Tier 3: Native macOS AXUIElement value set
-                    if not typed and target_id and target_el and target_el.source == "macos_ax" and target_el.native_element:
-                        try:
-                            from magnum.driver.macos_ax import MacOSAccessibilityDriver
-                            typed = MacOSAccessibilityDriver.set_ax_element_value(target_el.native_element, t)
-                            if typed:
-                                console.print(f"[bold green]🍏 Astra Native AX Set Value [{target_id}]: '{t[:60]}'[/bold green]")
-                        except Exception as e:
-                            logger.debug(f"Native AX set value error: {e}")
-
-                    # Tier 4: Physical click + keyboard typing
-                    if not typed:
-                        if target_el:
-                            await self.driver.click(target_el.center_x, target_el.center_y)
-                            await asyncio.sleep(0.15)
-                        console.print(f"[bold green]⌨️ Typing: '{t[:60]}{'...' if len(t)>60 else ''}'[/bold green]")
-                        await self.driver.type_text(t)
-
-                elif act_type == "PRESS_KEY" and action_data.key:
-                    handled_key = False
-                    try:
-                        from magnum.driver.open_computer_use_bridge import OpenComputerUseBridge
-                        if OpenComputerUseBridge.is_available():
-                            handled_key = OpenComputerUseBridge.press_key(app=active_app, key=action_data.key)
-                    except Exception:
-                        pass
-                    if not handled_key:
-                        await self.driver.press_key(action_data.key)
-
-                elif act_type == "HOTKEY" and action_data.hotkeys:
-                    step_text = (current_step.title + " " + current_step.description).lower()
-                    if "navigate" in step_text or "open" in step_text:
-                        url_map = {"youtube": "https://www.youtube.com", "gmail": "https://mail.google.com",
-                                   "linkedin": "https://www.linkedin.com", "github": "https://github.com"}
-                        url = next((v for k, v in url_map.items() if k in step_text), "https://google.com")
-                        await self.driver.navigate(url)
-                    else:
-                        await self.driver.hotkey(*action_data.hotkeys)
-
-                elif act_type == "SCROLL":
-                    handled_scroll = False
-                    try:
-                        from magnum.driver.open_computer_use_bridge import OpenComputerUseBridge
-                        if OpenComputerUseBridge.is_available():
-                            handled_scroll = OpenComputerUseBridge.scroll(
-                                app=active_app,
-                                direction=action_data.scroll_direction or "down",
+                    elif act_type == "ASK_USER":
+                        draft_text = action_data.text or action_data.thought
+                        options = action_data.options
+                        if options and any("approve" in o.lower() or "post" in o.lower() for o in options):
+                            decision = await self.hitl_handler.confirm_comment_async(
+                                draft_comment=draft_text, author=current_step.title, post_summary=instruction,
                             )
-                    except Exception:
-                        pass
-                    if not handled_scroll:
-                        await self.driver.scroll(direction=action_data.scroll_direction or "down", amount=action_data.scroll_amount or 300)
+                            if decision.action == HitlActionType.APPROVE:
+                                step_completed = True
+                            else:
+                                return False
+                        else:
+                            user_ans = await self.hitl_handler.ask_user_text_async(draft_text)
+                            console.print(f"[bold green]✓ User: '{user_ans}'[/bold green]")
+                            history.append(f"Agent Asked: {draft_text} | User: {user_ans}")
 
-                elif act_type == "WAIT":
-                    await asyncio.sleep(1.5)
+                            # Store in persistent memory & knowledge
+                            from magnum.intelligence.memory import get_memory
+                            mem = get_memory()
+                            mem.learn_user_rule(f"When asked '{draft_text}', user answered: '{user_ans}'")
+                            if "antigravity" in draft_text.lower() or "antigravity" in user_ans.lower():
+                                mem.learn_app_mapping("antigravity", "Antigravity IDE")
+                                mem.learn_user_rule("Antigravity is already open and focused in the current workspace.")
+                            await asyncio.sleep(1.0)
 
-                # Track performed actions for deduplication
-                actions_performed.append((act_type, action_data.text or ""))
-                history.append(f"Step {current_step.step_index}: {action_data.action} - {action_data.thought}")
+                    elif act_type in ("CLICK", "DOUBLE_CLICK", "RIGHT_CLICK"):
+                        x, y = 0.0, 0.0
+                        target_id = action_data.target_id
+                        target_el = a11y_tree.get_element_by_id(target_id) if (target_id and a11y_tree) else None
 
-                # ── ASTRA CLOSED-LOOP STATE VALIDATION ("Check Its Work") ──
-                await asyncio.sleep(self.config.step_delay)
-                try:
-                    verify_screenshot = await self.driver.screenshot(f"verify_step_{current_step.step_index}.png")
-                    verify_ocr = ScreenGrounder.extract_screen_text_elements(verify_screenshot)
+                        # ── MULTI-TIER EXECUTION CASCADE ──
+                        # Tier 1: Browser DOM dispatch (Chrome/Safari)
+                        handled = False
+                        if target_id and target_el and target_el.source == "browser_dom":
+                            handled = browser_ctrl.click_element_by_id(target_id)
+                            if handled:
+                                console.print(f"[bold green]⚡ Astra DOM Click: [{target_id}] '{target_el.label}'[/bold green]")
 
-                    if act_type == "TYPE" and action_data.text:
-                        typed_lower = action_data.text.strip().lower()
-                        if any(typed_lower in el.text.strip().lower() for el in verify_ocr):
-                            console.print(f"[bold green]✓ Astra Verification: Text '{action_data.text[:30]}' confirmed on screen[/bold green]")
-                            step_completed = True
-                    elif act_type in ("CLICK", "DOUBLE_CLICK") and plan.active_index < len(plan.steps):
-                        next_step = plan.steps[plan.active_index]
-                        next_keywords = next_step.title.lower().split()
-                        if any(len(w) > 4 and any(w in el.text.strip().lower() for el in verify_ocr) for w in next_keywords):
-                            console.print(f"[bold green]✓ Astra Verification: Next step content '{next_step.title}' now visible[/bold green]")
-                            step_completed = True
-                except Exception as e:
-                    logger.debug(f"Astra verification check skipped: {e}")
+                        # Tier 2: Open Computer Use (OCU / Codex) Engine Bridge
+                        if not handled and target_id:
+                            try:
+                                from magnum.driver.open_computer_use_bridge import OpenComputerUseBridge
+                                if OpenComputerUseBridge.is_available():
+                                    handled = OpenComputerUseBridge.click(app=active_app, element_index=str(target_id))
+                                    if handled:
+                                        console.print(f"[bold green]👾 Open-Computer-Use Click: [{target_id}] in {active_app}[/bold green]")
+                            except Exception as e:
+                                logger.debug(f"OpenComputerUseBridge click error: {e}")
 
-                # Record this exact attempt in the flight recorder
-                from magnum.logger import flight_recorder
-                flight_recorder.record_attempt(
-                    step_index=current_step.step_index,
-                    attempt_number=step_attempts,
-                    active_app=active_app,
-                    screenshot=f"step_{current_step.step_index}_attempt_{step_attempts}.png",
-                    ocr_count=element_count,
-                    a11y_targets_count=len(a11y_tree.elements) if (a11y_tree and a11y_tree.elements) else 0,
-                    ai_thought=action_data.thought,
-                    chosen_action=act_type,
-                    execution_tier="Multi-Tier Astra Cascade",
-                    target_id=action_data.target_id,
-                    target_label=action_data.text,
-                    target_coords=action_data.coordinates,
-                    input_text=action_data.text,
-                    key_pressed=action_data.key,
-                    execution_success=step_completed or (act_type in ("WAIT", "ASK_USER", "OBSTACLE_DETECTED")),
-                    verification_confirmed=step_completed,
-                    verification_note="Closed-loop verification confirmed state change" if step_completed else "Awaiting visual confirmation",
-                    failure_reason=None if step_completed else f"Attempt {step_attempts} not yet verified",
+                        # Tier 3: Native macOS AXUIElement dispatch (Finder, Settings, Antigravity, etc.)
+                        if not handled and target_id and target_el and target_el.source == "macos_ax" and target_el.native_element:
+                            try:
+                                from magnum.driver.macos_ax import MacOSAccessibilityDriver
+                                handled = MacOSAccessibilityDriver.press_ax_element(target_el.native_element)
+                                if handled:
+                                    console.print(f"[bold green]🍏 Astra Native AX Press: [{target_id}] '{target_el.label}'[/bold green]")
+                            except Exception as e:
+                                logger.debug(f"Native AX click error: {e}")
+
+                        # Tier 4: Physical mouse click fallback
+                        if not handled:
+                            if target_el:
+                                x, y = target_el.center_x, target_el.center_y
+                                console.print(f"[bold green]🎯 Astra Target [{target_id}]: '{target_el.label}' → ({x:.0f}, {y:.0f})[/bold green]")
+                            elif action_data.text:
+                                exact = ScreenGrounder.find_element_by_text(screenshot, action_data.text)
+                                if exact:
+                                    x, y = exact
+                                    console.print(f"[bold green]🎯 OCR: '{action_data.text}' → ({x:.0f}, {y:.0f})[/bold green]")
+                                else:
+                                    console.print(f"[bold yellow]⚠️ OCR can't find '{action_data.text}'[/bold yellow]")
+
+                            if x == 0.0 and y == 0.0 and action_data.coordinates:
+                                x = action_data.coordinates.get("x", 0.0)
+                                y = action_data.coordinates.get("y", 0.0)
+
+                            if x == 0.0 and y == 0.0:
+                                console.print(f"[bold red]❌ Cannot resolve click target[/bold red]")
+                            else:
+                                if act_type == "CLICK":
+                                    await self.driver.click(x, y)
+                                elif act_type == "DOUBLE_CLICK":
+                                    await self.driver.double_click(x, y)
+                                elif act_type == "RIGHT_CLICK":
+                                    await self.driver.right_click(x, y)
+
+                    elif act_type == "TYPE" and action_data.text:
+                        t = action_data.text
+                        target_id = action_data.target_id
+                        target_el = a11y_tree.get_element_by_id(target_id) if (target_id and a11y_tree) else None
+
+                        # ── MULTI-TIER TYPE CASCADE ──
+                        # Tier 1: Browser DOM type
+                        typed = False
+                        if target_id and target_el and target_el.source == "browser_dom":
+                            typed = browser_ctrl.type_element_by_id(target_id, t)
+                            if typed:
+                                console.print(f"[bold green]⚡ Astra DOM Type into [{target_id}]: '{t[:60]}'[/bold green]")
+
+                        # Tier 2: Open Computer Use (OCU / Codex) Engine Bridge
+                        if not typed and target_id:
+                            try:
+                                from magnum.driver.open_computer_use_bridge import OpenComputerUseBridge
+                                if OpenComputerUseBridge.is_available():
+                                    typed = OpenComputerUseBridge.set_value(app=active_app, element_index=str(target_id), value=t)
+                                    if typed:
+                                        console.print(f"[bold green]👾 Open-Computer-Use Set Value: [{target_id}] in {active_app}[/bold green]")
+                            except Exception as e:
+                                logger.debug(f"OpenComputerUseBridge set_value error: {e}")
+
+                        # Tier 3: Native macOS AXUIElement value set
+                        if not typed and target_id and target_el and target_el.source == "macos_ax" and target_el.native_element:
+                            try:
+                                from magnum.driver.macos_ax import MacOSAccessibilityDriver
+                                typed = MacOSAccessibilityDriver.set_ax_element_value(target_el.native_element, t)
+                                if typed:
+                                    console.print(f"[bold green]🍏 Astra Native AX Set Value [{target_id}]: '{t[:60]}'[/bold green]")
+                            except Exception as e:
+                                logger.debug(f"Native AX set value error: {e}")
+
+                        # Tier 4: Physical click + keyboard typing
+                        if not typed:
+                            if target_el:
+                                await self.driver.click(target_el.center_x, target_el.center_y)
+                                await asyncio.sleep(0.15)
+                            console.print(f"[bold green]⌨️ Typing: '{t[:60]}{'...' if len(t)>60 else ''}'[/bold green]")
+                            await self.driver.type_text(t)
+
+                    elif act_type == "PRESS_KEY" and action_data.key:
+                        handled_key = False
+                        try:
+                            from magnum.driver.open_computer_use_bridge import OpenComputerUseBridge
+                            if OpenComputerUseBridge.is_available():
+                                handled_key = OpenComputerUseBridge.press_key(app=active_app, key=action_data.key)
+                        except Exception:
+                            pass
+                        if not handled_key:
+                            await self.driver.press_key(action_data.key)
+
+                    elif act_type == "HOTKEY" and action_data.hotkeys:
+                        step_text = (current_step.title + " " + current_step.description).lower()
+                        if "navigate" in step_text or "open" in step_text:
+                            url_map = {"youtube": "https://www.youtube.com", "gmail": "https://mail.google.com",
+                                       "linkedin": "https://www.linkedin.com", "github": "https://github.com"}
+                            url = next((v for k, v in url_map.items() if k in step_text), "https://google.com")
+                            await self.driver.navigate(url)
+                        else:
+                            await self.driver.hotkey(*action_data.hotkeys)
+
+                    elif act_type == "SCROLL":
+                        handled_scroll = False
+                        try:
+                            from magnum.driver.open_computer_use_bridge import OpenComputerUseBridge
+                            if OpenComputerUseBridge.is_available():
+                                handled_scroll = OpenComputerUseBridge.scroll(
+                                    app=active_app,
+                                    direction=action_data.scroll_direction or "down",
+                                )
+                        except Exception:
+                            pass
+                        if not handled_scroll:
+                            await self.driver.scroll(direction=action_data.scroll_direction or "down", amount=action_data.scroll_amount or 300)
+
+                    elif act_type == "WAIT":
+                        await asyncio.sleep(1.5)
+
+                    # Track performed actions for deduplication
+                    actions_performed.append((act_type, action_data.text or ""))
+                    history.append(f"Step {current_step.step_index}: {action_data.action} - {action_data.thought}")
+
+                    # ── ASTRA CLOSED-LOOP STATE VALIDATION ("Check Its Work") ──
+                    await asyncio.sleep(self.config.step_delay)
+                    try:
+                        verify_screenshot = await self.driver.screenshot(f"verify_step_{current_step.step_index}.png")
+                        verify_ocr = ScreenGrounder.extract_screen_text_elements(verify_screenshot)
+
+                        if act_type == "TYPE" and action_data.text:
+                            typed_lower = action_data.text.strip().lower()
+                            if any(typed_lower in el.text.strip().lower() for el in verify_ocr):
+                                console.print(f"[bold green]✓ Astra Verification: Text '{action_data.text[:30]}' confirmed on screen[/bold green]")
+                                step_completed = True
+                        elif act_type in ("CLICK", "DOUBLE_CLICK") and plan.active_index < len(plan.steps):
+                            next_step = plan.steps[plan.active_index]
+                            next_keywords = next_step.title.lower().split()
+                            if any(len(w) > 4 and any(w in el.text.strip().lower() for el in verify_ocr) for w in next_keywords):
+                                console.print(f"[bold green]✓ Astra Verification: Next step content '{next_step.title}' now visible[/bold green]")
+                                step_completed = True
+                    except Exception as e:
+                        logger.debug(f"Astra verification check skipped: {e}")
+
+                    # Record this exact attempt in the flight recorder
+                    from magnum.logger import flight_recorder
+                    flight_recorder.record_attempt(
+                        step_index=current_step.step_index,
+                        attempt_number=step_attempts,
+                        active_app=active_app,
+                        screenshot=f"step_{current_step.step_index}_attempt_{step_attempts}.png",
+                        ocr_count=element_count,
+                        a11y_targets_count=len(a11y_tree.elements) if (a11y_tree and a11y_tree.elements) else 0,
+                        ai_thought=action_data.thought,
+                        chosen_action=act_type,
+                        execution_tier="Multi-Tier Astra Cascade",
+                        target_id=action_data.target_id,
+                        target_label=action_data.text,
+                        target_coords=action_data.coordinates,
+                        input_text=action_data.text,
+                        key_pressed=action_data.key,
+                        execution_success=step_completed or (act_type in ("WAIT", "ASK_USER", "OBSTACLE_DETECTED")),
+                        verification_confirmed=step_completed,
+                        verification_note="Closed-loop verification confirmed state change" if step_completed else "Awaiting visual confirmation",
+                        failure_reason=None if step_completed else f"Attempt {step_attempts} not yet verified",
+                    )
+
+                # Mark complete on HUD
+                if not step_completed:
+                    log_failure(
+                        context=f"Step {current_step.step_index} exceeded {max_step_attempts} attempts without verification",
+                        error=f"Step '{current_step.title}' not verified as completed.",
+                        step_info=f"[{current_step.step_index}/{total_steps}] {current_step.title}",
+                        screenshot_path=f"step_{current_step.step_index}_attempt_{step_attempts}.png",
+                    )
+                flight_recorder.complete_step(current_step.step_index, success=step_completed)
+                completed_indices.append(current_step.step_index)
+                plan.advance_to_next_step()
+                self.overlay.update_plan(
+                    steps=plan.get_titles_list(),
+                    active_idx=plan.active_index,
+                    completed=completed_indices,
                 )
-
-            # Mark complete on HUD
-            if not step_completed:
-                log_failure(
-                    context=f"Step {current_step.step_index} exceeded {max_step_attempts} attempts without verification",
-                    error=f"Step '{current_step.title}' not verified as completed.",
-                    step_info=f"[{current_step.step_index}/{total_steps}] {current_step.title}",
-                    screenshot_path=f"step_{current_step.step_index}_attempt_{step_attempts}.png",
-                )
-            flight_recorder.complete_step(current_step.step_index, success=step_completed)
-            completed_indices.append(current_step.step_index)
-            plan.advance_to_next_step()
-            self.overlay.update_plan(
-                steps=plan.get_titles_list(),
-                active_idx=plan.active_index,
-                completed=completed_indices,
-            )
-            console.print(f"[bold green]✓ Step {current_step.step_index} completed![/bold green]")
+                console.print(f"[bold green]✓ Step {current_step.step_index} completed![/bold green]")
 
             # Done
             self.overlay.set_status("GOAL ACCOMPLISHED")
