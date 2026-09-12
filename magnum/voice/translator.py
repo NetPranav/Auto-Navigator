@@ -32,6 +32,7 @@ class TranslationResult:
 # Common Hinglish verbs, nouns, and conjunctions for OS navigation
 HINGLISH_KEYWORDS = {
     # Actions / Verbs
+    "karo": "do", "kar": "do", "karna": "do", "kardo": "do",
     "kholo": "open", "khol": "open", "open karo": "open",
     "band karo": "close", "band kar do": "close", "hatao": "remove",
     "chalao": "play", "bajao": "play", "chala": "play", "play karo": "play",
@@ -43,6 +44,8 @@ HINGLISH_KEYWORDS = {
     "refresh karo": "refresh", "reload karo": "reload",
     "batao": "tell me", "samjhao": "explain",
     "ruko": "wait", "ruk": "wait", "thoda ruko": "wait a moment",
+    "reply karo": "reply", "bhejo": "send", "send karo": "send",
+    "check karo": "check", "padho": "read", "scan karo": "scan",
     
     # Common words
     "aur": "and", "phir": "then", "ke baad": "after that",
@@ -141,6 +144,10 @@ class HindiEnglishTranslator:
             (r"^mera\s+(.*?)\s+(?:folder\s+)?(?:dikhao|kholo)$", r"open my \1 folder"),
             # "screen dekho / kya chal raha hai"
             (r"^(?:screen|desktop)\s+(?:dekho|check karo)$", r"look at the screen and inspect active window"),
+            # "(item) check karo" -> "check (item)"
+            (r"^(.*?)\s+(?:ko\s+)?(?:check karo|check kar do)$", r"check \1"),
+            # "(contact) ko reply karo" -> "reply to (contact)"
+            (r"^(.*?)\s+(?:ko\s+)?(?:reply karo|reply kar do)$", r"reply to \1"),
             # "wait / ruko"
             (r"^(?:ek second\s+)?(?:ruko|ruk ja|ruk jao)$", r"wait"),
         ]
