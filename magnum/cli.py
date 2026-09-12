@@ -230,10 +230,23 @@ def main() -> None:
         action="store_true",
         help="Show daemon status",
     )
+    parser.add_argument(
+        "--logs", "--log",
+        action="store_true",
+        help="Display recent entries from magnum.log / magnm.log for diagnostics",
+    )
 
     args = parser.parse_args()
     config.default_execution_mode = args.mode
     config.hitl_interface = args.hitl
+
+    from magnum.logger import setup_magnum_logging, get_recent_logs, get_log_file_path
+    setup_magnum_logging()
+
+    if args.logs:
+        console.print(f"\n[bold cyan]📜 Magnum Diagnostics Log ({get_log_file_path()}):[/bold cyan]\n")
+        console.print(get_recent_logs(lines=50))
+        return
 
     if args.calibrate:
         from magnum.voice.calibration import run_calibration

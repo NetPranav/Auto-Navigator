@@ -114,6 +114,21 @@ Directly invoke the bundled native Mach-O `open-computer-use` engine:
 ./node_modules/.bin/ocu snapshot "Safari"
 ```
 
+### 6. Diagnostic Logging & Failure Tracking (`magnum.log` / `magnm.log`)
+Every user instruction, perception target, planning step, tool call, and failure is recorded in real time into `magnum.log` (also accessible as `magnm.log`):
+```bash
+# View recent execution logs and failure reports directly in terminal
+magnum --logs
+
+# Or inspect the log file directly
+cat magnum.log
+tail -f magnum.log
+```
+Within the interactive prompt or voice mode, simply say:
+- `show logs`
+- `what failed`
+- `check log`
+
 ---
 
 ## 💡 Quick Examples & Automations

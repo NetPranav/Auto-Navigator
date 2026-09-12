@@ -58,6 +58,10 @@ class MagnumAgent:
             on_notify=self.hitl_handler.notify,
         )
 
+        # Initialize persistent logging to magnum.log (and magnm.log)
+        from magnum.logger import setup_magnum_logging
+        self.log_file = setup_magnum_logging()
+
         if self.mode == "desktop":
             self.driver: BaseDriver = DesktopDriver()
         else:
@@ -287,6 +291,17 @@ class MagnumAgent:
         Process any instruction — auto-detects system commands, watchers, or foreground tasks.
         """
         lower = instruction.lower().strip()
+
+        from magnum.logger import log_instruction, get_recent_logs, get_log_file_path
+        log_instruction(instruction, mode=getattr(self, "mode", "desktop"))
+
+        # 0. Show recent logs / Diagnostics query
+        if any(lower.startswith(k) for k in ("show log", "show logs", "view log", "view logs", "check log", "check logs", "what failed", "show failure", "read log")):
+            recent = get_recent_logs(lines=50)
+            console.print(f"\n[bold cyan]📜 Magnum Diagnostics Log ({get_log_file_path()}):[/bold cyan]\n")
+            console.print(recent)
+            self.voice_engine.speak("Displaying recent Magnum execution logs.")
+            return True
 
         # 1. Stop / Cancel all background watchers (robust natural language detection)
         is_start = any(lower.startswith(k) for k in ("start", "create", "launch", "run", "turn on", "set up", "make")) or "start a watcher" in lower or "create a watcher" in lower
@@ -1350,6 +1365,18 @@ class MagnumAgent:
 
     async def execute(self, instruction: str) -> bool:
         """Dynamically plan and execute the user's task step-by-step."""
+        import time
+        start_exec_time = time.time()
+        from magnum.logger import (
+            log_plan,
+            log_step_start,
+            log_perception,
+            log_action_execution,
+            log_failure,
+            log_task_complete,
+            log_user_interaction,
+        )
+
         console.print(f"\n[bold cyan]🎯 Goal:[/bold cyan] {instruction}")
         console.print("[dim]🧠 Generating dynamic AI plan checklist...[/dim]")
 
@@ -1358,49 +1385,52 @@ class MagnumAgent:
         if active_watchers:
             console.print(f"[dim]👁️ {len(active_watchers)} background watcher(s) paused during this task[/dim]")
 
-        # 1. Generate dynamic plan
-        plan: PlanChecklist = self.nim_client.generate_plan(instruction)
+        try:
+            # 1. Generate dynamic plan
+            plan: PlanChecklist = self.nim_client.generate_plan(instruction)
+            log_plan(instruction, [f"{s.title}: {s.description}" for s in plan.steps])
 
-        table = Table(title="📋 MAGNUM PLAN", border_style="cyan")
-        table.add_column("Step", style="bold yellow", width=6)
-        table.add_column("Title", style="bold white")
-        table.add_column("Description", style="dim")
-        for s in plan.steps:
-            table.add_row(str(s.step_index), s.title, s.description)
-        console.print(table)
+            table = Table(title="📋 MAGNUM PLAN", border_style="cyan")
+            table.add_column("Step", style="bold yellow", width=6)
+            table.add_column("Title", style="bold white")
+            table.add_column("Description", style="dim")
+            for s in plan.steps:
+                table.add_row(str(s.step_index), s.title, s.description)
+            console.print(table)
 
-        # 2. HUD
-        completed_indices: List[int] = []
-        self.overlay.update_plan(
-            steps=plan.get_titles_list(),
-            active_idx=plan.active_index,
-            completed=completed_indices,
-        )
-
-        total_steps = len(plan.steps)
-        history: List[str] = []
-
-        # 3. Execute step-by-step
-        while not plan.is_finished:
-            current_step = plan.current_step
-            if not current_step:
-                break
-
-            console.print(
-                f"\n[bold blue]─── Step {current_step.step_index}/{total_steps}: {current_step.title} ───[/bold blue]"
-            )
-            self.overlay.set_status(f"STEP {current_step.step_index}/{total_steps}: {current_step.title.upper()}")
+            # 2. HUD
+            completed_indices: List[int] = []
             self.overlay.update_plan(
                 steps=plan.get_titles_list(),
-                active_idx=current_step.step_index,
+                active_idx=plan.active_index,
                 completed=completed_indices,
             )
 
-            step_attempts = 0
-            max_step_attempts = 8
-            step_completed = False
-            last_action_key = ""  # Track last action to detect repeats
-            actions_performed = []  # Track what we've done this step
+            total_steps = len(plan.steps)
+            history: List[str] = []
+
+            # 3. Execute step-by-step
+            while not plan.is_finished:
+                current_step = plan.current_step
+                if not current_step:
+                    break
+
+                log_step_start(current_step.step_index, total_steps, current_step.title, current_step.description)
+                console.print(
+                    f"\n[bold blue]─── Step {current_step.step_index}/{total_steps}: {current_step.title} ───[/bold blue]"
+                )
+                self.overlay.set_status(f"STEP {current_step.step_index}/{total_steps}: {current_step.title.upper()}")
+                self.overlay.update_plan(
+                    steps=plan.get_titles_list(),
+                    active_idx=current_step.step_index,
+                    completed=completed_indices,
+                )
+
+                step_attempts = 0
+                max_step_attempts = 8
+                step_completed = False
+                last_action_key = ""  # Track last action to detect repeats
+                actions_performed = []  # Track what we've done this step
 
             while step_attempts < max_step_attempts and not step_completed:
                 step_attempts += 1
@@ -1434,6 +1464,7 @@ class MagnumAgent:
                     browser_controller=browser_ctrl,
                     ocr_elements=ocr_elements,
                 )
+                log_perception(active_app, element_count, len(a11y_tree.elements))
 
                 # Astra Set-of-Marks visual overlay
                 if a11y_tree.elements:
@@ -1850,6 +1881,13 @@ class MagnumAgent:
                     logger.debug(f"Astra verification check skipped: {e}")
 
             # Mark complete on HUD
+            if not step_completed:
+                log_failure(
+                    context=f"Step {current_step.step_index} exceeded {max_step_attempts} attempts without verification",
+                    error=f"Step '{current_step.title}' not verified as completed.",
+                    step_info=f"[{current_step.step_index}/{total_steps}] {current_step.title}",
+                    screenshot_path=f"step_{current_step.step_index}_attempt_{step_attempts}.png",
+                )
             completed_indices.append(current_step.step_index)
             plan.advance_to_next_step()
             self.overlay.update_plan(
@@ -1859,21 +1897,32 @@ class MagnumAgent:
             )
             console.print(f"[bold green]✓ Step {current_step.step_index} completed![/bold green]")
 
-        # Done
-        self.overlay.set_status("GOAL ACCOMPLISHED")
-        self.overlay.flash()
-        self.hitl_handler.notify("Goal Completed!", f"Done: {instruction}")
-        try:
-            from magnum.notifications import send_notification
-            send_notification("⚡ Magnum: Goal Completed", f"Done: {instruction}", sound="Glass")
-        except Exception:
-            pass
-        self.voice_engine.speak(f"Finished. {instruction}")
-        console.print(f"\n[bold green]🎉 Done: {instruction}[/bold green]\n")
+            # Done
+            self.overlay.set_status("GOAL ACCOMPLISHED")
+            self.overlay.flash()
+            self.hitl_handler.notify("Goal Completed!", f"Done: {instruction}")
+            try:
+                from magnum.notifications import send_notification
+                send_notification("⚡ Magnum: Goal Completed", f"Done: {instruction}", sound="Glass")
+            except Exception:
+                pass
+            self.voice_engine.speak(f"Finished. {instruction}")
+            console.print(f"\n[bold green]🎉 Done: {instruction}[/bold green]\n")
+            log_task_complete(instruction, success=True, duration_seconds=time.time() - start_exec_time)
 
-        # Show watcher status
-        watchers = self.task_queue.get_active_watchers()
-        if watchers:
-            console.print(f"[dim]👁️ {len(watchers)} background watcher(s) resumed[/dim]")
+            # Show watcher status
+            watchers = self.task_queue.get_active_watchers()
+            if watchers:
+                console.print(f"[dim]👁️ {len(watchers)} background watcher(s) resumed[/dim]")
 
-        return True
+            return True
+
+        except Exception as e:
+            log_failure(
+                context=f"Fatal exception executing instruction: '{instruction}'",
+                error=e,
+            )
+            log_task_complete(instruction, success=False, duration_seconds=time.time() - start_exec_time)
+            console.print(f"[bold red]❌ Error executing task:[/bold red] {e}")
+            self.voice_engine.speak("An error occurred during task execution. Check magnum log.")
+            return False
