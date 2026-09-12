@@ -455,12 +455,21 @@ flight_recorder = TaskFlightRecorder()
 
 # ── HELPER LOGGING FUNCTIONS ──
 
-def log_instruction(instruction: str, mode: str = "desktop") -> None:
-    """Log the start of a user instruction."""
+def log_instruction(
+    instruction: str,
+    mode: str = "desktop",
+    raw_input: Optional[str] = None,
+    language: Optional[str] = None,
+) -> None:
+    """Log the start of a user instruction with optional translation metadata."""
     _ensure_initialized()
     logger = logging.getLogger("magnum.agent")
     sep = "=" * 70
-    logger.info(f"\n{sep}\n▶ NEW USER INSTRUCTION [{mode.upper()}]: '{instruction}'\n{sep}")
+    if raw_input and raw_input != instruction:
+        lang_str = f" [Translated from {language.upper() if language else 'HINDI'}: '{raw_input}']"
+    else:
+        lang_str = ""
+    logger.info(f"\n{sep}\n▶ NEW USER INSTRUCTION [{mode.upper()}]: '{instruction}'{lang_str}\n{sep}")
 
 
 def log_plan(goal: str, steps: List[str]) -> None:

@@ -289,11 +289,26 @@ class MagnumAgent:
     async def process_instruction(self, instruction: str, is_workflow_step: bool = False) -> bool:
         """
         Process any instruction — auto-detects system commands, watchers, or foreground tasks.
+        Automatically detects Hindi/Hinglish and translates into clear English instructions.
         """
+        raw_input = instruction.strip()
+        from magnum.voice.translator import get_hindi_translator
+        translator = get_hindi_translator()
+        trans_res = translator.translate(raw_input)
+        if trans_res.was_translated:
+            console.print(f"[dim]🇮🇳 Hindi/Hinglish Input ({trans_res.detected_language}): '{raw_input}'[/dim]")
+            console.print(f"[bold cyan]🌐 Translated to English:[/bold cyan] '{trans_res.translated_text}'")
+            instruction = trans_res.translated_text
+
         lower = instruction.lower().strip()
 
         from magnum.logger import log_instruction, get_recent_logs, get_log_file_path, get_latest_run_summary, get_latest_run_file_path
-        log_instruction(instruction, mode=getattr(self, "mode", "desktop"))
+        log_instruction(
+            instruction,
+            mode=getattr(self, "mode", "desktop"),
+            raw_input=raw_input if trans_res.was_translated else None,
+            language=trans_res.detected_language if trans_res.was_translated else None,
+        )
 
         # 0. Show comprehensive flight run / plan / execution audit / failure query
         if any(lower.startswith(k) for k in (

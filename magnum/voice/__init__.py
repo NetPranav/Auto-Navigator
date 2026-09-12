@@ -20,6 +20,8 @@ import sounddevice as sd
 import speech_recognition as sr
 
 from magnum.voice.calibration import load_calibration
+from magnum.voice.turn_detector import TurnDetector, TurnDetectorConfig, TurnState
+from magnum.voice.translator import HindiEnglishTranslator, get_hindi_translator, TranslationResult
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -75,6 +77,11 @@ class VoiceEngine:
             self.silence_thresh = 140.0
 
         self._current_tts_proc: Optional[subprocess.Popen] = None
+        self.is_agent_speaking = False
+
+        # LiveKit / BargeKit-inspired smart turn detector & Hindi translator
+        self.turn_detector = TurnDetector()
+        self.translator = get_hindi_translator()
 
     def play_chime(self, sound_path: str = CHIME_WAKE) -> None:
         """Play a subtle native macOS system audio chime."""
@@ -108,6 +115,7 @@ class VoiceEngine:
         self.stop_speaking()
         clean_text = text.replace("*", "").replace("#", "").replace("`", "").replace("✓", "").replace("⚡", "").strip()
         logger.info(f"🔊 Magnum Speaking: {clean_text}")
+        self.is_agent_speaking = True
         try:
             cmd = ["say", "-v", self.voice_name, clean_text]
             self._current_tts_proc = subprocess.Popen(
@@ -121,6 +129,9 @@ class VoiceEngine:
                 self._current_tts_proc = None
         except Exception as e:
             logger.warning(f"Voice speech synthesis notice: {e}")
+        finally:
+            if blocking:
+                self.is_agent_speaking = False
 
     def capture_phrase_sync(
         self,
@@ -197,14 +208,28 @@ class VoiceEngine:
         raw_bytes = np.concatenate(recorded_frames).tobytes()
         return sr.AudioData(raw_bytes, self.sample_rate, 2)
 
-    def transcribe_audio(self, audio: sr.AudioData) -> Optional[str]:
-        """Convert recorded AudioData to text via speech recognition."""
+    def transcribe_audio(self, audio: sr.AudioData, language: Optional[str] = None) -> Optional[str]:
+        """
+        Convert recorded AudioData to text via speech recognition.
+        Supports multi-lingual recognition (English, Hinglish, and Hindi hi-IN fallback).
+        """
         if self._stop_event.is_set() or not self.is_listening:
             return None
+        
+        # Primary pass (default en-IN handles English & Hinglish accents)
+        lang = language or "en-IN"
         try:
-            text = self.recognizer.recognize_google(audio)
+            text = self.recognizer.recognize_google(audio, language=lang)
             return text.strip()
         except sr.UnknownValueError:
+            # If default pass failed to recognize, try Hindi (hi-IN) for native Devanagari speech
+            if lang != "hi-IN":
+                try:
+                    hindi_text = self.recognizer.recognize_google(audio, language="hi-IN")
+                    if hindi_text and hindi_text.strip():
+                        return hindi_text.strip()
+                except Exception:
+                    pass
             return None
         except Exception as e:
             logger.debug(f"Speech transcription notice: {e}")
@@ -230,13 +255,18 @@ class VoiceEngine:
 
         return False, None
 
-    async def listen_for_instruction(self, silence_timeout: float = 2.2) -> Optional[str]:
-        """Actively listen for a spoken instruction after wake word."""
+    async def listen_for_instruction(self, silence_timeout: Optional[float] = None) -> Optional[str]:
+        """
+        Actively listen for a spoken instruction after wake word.
+        Uses adaptive silence timeout (defaults to hesitation_delay: 3.2s)
+        so the user can think and formulate words without getting cut off.
+        """
         loop = asyncio.get_running_loop()
+        timeout = silence_timeout or self.turn_detector.config.hesitation_delay
         self.play_chime(CHIME_WAKE)
         audio = await loop.run_in_executor(
             None,
-            lambda: self.capture_phrase_sync(max_duration=30.0, no_speech_timeout=5.0, silence_timeout=silence_timeout),
+            lambda: self.capture_phrase_sync(max_duration=35.0, no_speech_timeout=6.0, silence_timeout=timeout),
         )
         if not audio or self._stop_event.is_set():
             return None
@@ -249,32 +279,52 @@ class VoiceEngine:
         silence_timeout: Optional[float] = None,
     ) -> None:
         """
-        Continuously listen in background for wake word and dispatch commands.
-        Uses adaptive silence timeout (3.0s default, 2.2s after prompts) so you can speak naturally.
+        Continuously listen in background for wake words and dispatch commands.
+        Features:
+        - Smart Turn-Taking & Hesitation Resilience: Waits up to 3.2s if you pause to think.
+        - Fake Interruption Filtering: Ignores coughs, mic thumps, and backchannels.
+        - Hindi / Hinglish to English: Translates spoken Hindi/Hinglish before giving to model.
         """
         self.is_listening = True
         self._stop_event.clear()
         loop = asyncio.get_running_loop()
-        vad_silence = silence_timeout or 3.0
+        vad_silence = silence_timeout or self.turn_detector.config.hesitation_delay
 
-        console.print(f"[dim]🎤 Voice listener active (Wake words: 'Hey', 'Magnum', 'Jarvis' | {vad_silence:.1f}s silence timeout)[/dim]")
-
-        incomplete_fillers = [
-            "i want you to", "i want you", "i need you to", "can you",
-            "could you", "please", "do this", "do this that", "i want", "i am",
-        ]
+        console.print(
+            f"[dim]🎤 Voice listener active (Wake words: 'Hey', 'Magnum', 'Jarvis' | "
+            f"Hesitation resilience: {vad_silence:.1f}s | Hindi/Hinglish auto-translation: ON)[/dim]"
+        )
 
         while self.is_listening and not self._stop_event.is_set():
             try:
                 audio = await loop.run_in_executor(
                     None,
-                    lambda: self.capture_phrase_sync(max_duration=30.0, no_speech_timeout=2.5, silence_timeout=vad_silence),
+                    lambda: self.capture_phrase_sync(max_duration=35.0, no_speech_timeout=3.0, silence_timeout=vad_silence),
                 )
                 if not audio or self._stop_event.is_set():
                     await asyncio.sleep(0.05)
                     continue
 
-                transcript = await loop.run_in_executor(None, lambda: self.transcribe_audio(audio))
+                audio_duration = len(audio.frame_data) / (self.sample_rate * 2)
+
+                # If agent is currently speaking, evaluate potential barge-in
+                if self.is_agent_speaking:
+                    transcript_peek = await loop.run_in_executor(None, lambda: self.transcribe_audio(audio))
+                    qualified, reason = self.turn_detector.qualify_barge_in(
+                        audio_duration_sec=audio_duration,
+                        transcript=transcript_peek,
+                        is_agent_speaking=True,
+                    )
+                    if not qualified:
+                        logger.debug(f"🔇 Fake interruption rejected ({reason}). Continuing agent speech.")
+                        continue
+                    else:
+                        console.print(f"[bold yellow]⚡ Interruption accepted:[/bold yellow] {reason}")
+                        self.stop_speaking()
+                        transcript = transcript_peek
+                else:
+                    transcript = await loop.run_in_executor(None, lambda: self.transcribe_audio(audio))
+
                 if not transcript or self._stop_event.is_set():
                     await asyncio.sleep(0.05)
                     continue
@@ -311,24 +361,39 @@ class VoiceEngine:
                     # Heard just wake word ("hey" or "magnum")
                     console.print("[bold yellow]🎤 Magnum:[/bold yellow] Yes?")
                     self.speak("Yes?", blocking=True)
-                    console.print("[dim]🎤 Listening for your command...[/dim]")
-                    command = await self.listen_for_instruction(silence_timeout=2.2)
+                    console.print("[dim]🎤 Listening for your command (take your time)...[/dim]")
+                    command = await self.listen_for_instruction(silence_timeout=self.turn_detector.config.hesitation_delay)
 
-                # Guard against incomplete filler phrases like "i want you to"
-                if command and any(command.strip().lower() == filler for filler in incomplete_fillers):
-                    console.print(f"[bold yellow]🎤 Incomplete phrase ('{command}'). Waiting for complete instruction...[/bold yellow]")
-                    self.speak("I'm listening, go ahead.", blocking=True)
-                    console.print("[dim]🎤 Continue speaking your task...[/dim]")
-                    more_command = await self.listen_for_instruction(silence_timeout=2.5)
+                # Smart Thinking & Hesitation Resilience:
+                # If user ended on a filler ("uhm", "wait", "ek second", "socho") or trailing connector ("and", "aur"),
+                # keep listening so their complete thought is gathered.
+                attempts = 0
+                while command and attempts < 3 and (
+                    self.turn_detector.is_filler_or_hesitation(command) or
+                    self.turn_detector.is_incomplete_clause(command)
+                ):
+                    attempts += 1
+                    console.print(f"[bold yellow]⏳ Thinking pause detected ('{command}'). Waiting for complete thought...[/bold yellow]")
+                    self.play_chime(CHIME_TICK)
+                    more_command = await self.listen_for_instruction(silence_timeout=self.turn_detector.config.hesitation_delay)
                     if more_command:
                         command = f"{command} {more_command}".strip()
                     else:
-                        command = None
+                        break
 
                 if command and not self._stop_event.is_set():
-                    console.print(f"[bold cyan]⚡ Executing Command:[/bold cyan] '{command}'")
+                    # Hindi / Hinglish to English Speech Translation
+                    trans_res = self.translator.translate(command)
+                    if trans_res.was_translated:
+                        console.print(f"[dim]🇮🇳 Hindi/Hinglish Detected ({trans_res.detected_language}): '{trans_res.original_text}'[/dim]")
+                        console.print(f"[bold cyan]🌐 Translated to English:[/bold cyan] '{trans_res.translated_text}'")
+                        final_cmd = trans_res.translated_text
+                    else:
+                        final_cmd = command
+
+                    console.print(f"[bold cyan]⚡ Executing Command:[/bold cyan] '{final_cmd}'")
                     self.speak("On it.", blocking=False)
-                    await on_command(command)
+                    await on_command(final_cmd)
                     self.play_chime(CHIME_DONE)
 
             except asyncio.CancelledError:
