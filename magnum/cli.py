@@ -235,13 +235,22 @@ def main() -> None:
         action="store_true",
         help="Display recent entries from magnum.log / magnm.log for diagnostics",
     )
+    parser.add_argument(
+        "--run",
+        action="store_true",
+        help="Display the complete flight recorder audit (plan, attempts, perceptions, thoughts, outcome) of the latest task",
+    )
 
     args = parser.parse_args()
     config.default_execution_mode = args.mode
     config.hitl_interface = args.hitl
 
-    from magnum.logger import setup_magnum_logging, get_recent_logs, get_log_file_path
+    from magnum.logger import setup_magnum_logging, get_recent_logs, get_log_file_path, get_latest_run_summary
     setup_magnum_logging()
+
+    if args.run:
+        console.print(get_latest_run_summary())
+        return
 
     if args.logs:
         console.print(f"\n[bold cyan]📜 Magnum Diagnostics Log ({get_log_file_path()}):[/bold cyan]\n")

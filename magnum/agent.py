@@ -292,15 +292,19 @@ class MagnumAgent:
         """
         lower = instruction.lower().strip()
 
-        from magnum.logger import log_instruction, get_recent_logs, get_log_file_path
+        from magnum.logger import log_instruction, get_recent_logs, get_log_file_path, get_latest_run_summary, get_latest_run_file_path
         log_instruction(instruction, mode=getattr(self, "mode", "desktop"))
 
-        # 0. Show recent logs / Diagnostics query
-        if any(lower.startswith(k) for k in ("show log", "show logs", "view log", "view logs", "check log", "check logs", "what failed", "show failure", "read log")):
-            recent = get_recent_logs(lines=50)
-            console.print(f"\n[bold cyan]📜 Magnum Diagnostics Log ({get_log_file_path()}):[/bold cyan]\n")
-            console.print(recent)
-            self.voice_engine.speak("Displaying recent Magnum execution logs.")
+        # 0. Show comprehensive flight run / plan / execution audit / failure query
+        if any(lower.startswith(k) for k in (
+            "show run", "latest run", "what did you plan", "how did you try", "why did it fail",
+            "what failed", "show plan", "flight recorder", "execution breakdown", "show log",
+            "view log", "check log", "check logs", "audit", "show audit"
+        )):
+            summary = get_latest_run_summary()
+            console.print(f"\n[bold cyan]🛸 Magnum Flight Recorder ({get_latest_run_file_path()}):[/bold cyan]\n")
+            console.print(summary)
+            self.voice_engine.speak("Displaying complete task execution breakdown.")
             return True
 
         # 1. Stop / Cancel all background watchers (robust natural language detection)
@@ -1368,6 +1372,7 @@ class MagnumAgent:
         import time
         start_exec_time = time.time()
         from magnum.logger import (
+            flight_recorder,
             log_plan,
             log_step_start,
             log_perception,
@@ -1377,6 +1382,7 @@ class MagnumAgent:
             log_user_interaction,
         )
 
+        flight_recorder.start_task(instruction, mode=getattr(self, "mode", "desktop"))
         console.print(f"\n[bold cyan]🎯 Goal:[/bold cyan] {instruction}")
         console.print("[dim]🧠 Generating dynamic AI plan checklist...[/dim]")
 
@@ -1388,6 +1394,7 @@ class MagnumAgent:
         try:
             # 1. Generate dynamic plan
             plan: PlanChecklist = self.nim_client.generate_plan(instruction)
+            flight_recorder.record_plan(instruction, plan.steps)
             log_plan(instruction, [f"{s.title}: {s.description}" for s in plan.steps])
 
             table = Table(title="📋 MAGNUM PLAN", border_style="cyan")
@@ -1415,6 +1422,7 @@ class MagnumAgent:
                 if not current_step:
                     break
 
+                flight_recorder.start_step(current_step.step_index, total_steps, current_step.title, current_step.description)
                 log_step_start(current_step.step_index, total_steps, current_step.title, current_step.description)
                 console.print(
                     f"\n[bold blue]─── Step {current_step.step_index}/{total_steps}: {current_step.title} ───[/bold blue]"
@@ -1880,6 +1888,29 @@ class MagnumAgent:
                 except Exception as e:
                     logger.debug(f"Astra verification check skipped: {e}")
 
+                # Record this exact attempt in the flight recorder
+                from magnum.logger import flight_recorder
+                flight_recorder.record_attempt(
+                    step_index=current_step.step_index,
+                    attempt_number=step_attempts,
+                    active_app=active_app,
+                    screenshot=f"step_{current_step.step_index}_attempt_{step_attempts}.png",
+                    ocr_count=element_count,
+                    a11y_targets_count=len(a11y_tree.elements) if (a11y_tree and a11y_tree.elements) else 0,
+                    ai_thought=action_data.thought,
+                    chosen_action=act_type,
+                    execution_tier="Multi-Tier Astra Cascade",
+                    target_id=action_data.target_id,
+                    target_label=action_data.text,
+                    target_coords=action_data.coordinates,
+                    input_text=action_data.text,
+                    key_pressed=action_data.key,
+                    execution_success=step_completed or (act_type in ("WAIT", "ASK_USER", "OBSTACLE_DETECTED")),
+                    verification_confirmed=step_completed,
+                    verification_note="Closed-loop verification confirmed state change" if step_completed else "Awaiting visual confirmation",
+                    failure_reason=None if step_completed else f"Attempt {step_attempts} not yet verified",
+                )
+
             # Mark complete on HUD
             if not step_completed:
                 log_failure(
@@ -1888,6 +1919,7 @@ class MagnumAgent:
                     step_info=f"[{current_step.step_index}/{total_steps}] {current_step.title}",
                     screenshot_path=f"step_{current_step.step_index}_attempt_{step_attempts}.png",
                 )
+            flight_recorder.complete_step(current_step.step_index, success=step_completed)
             completed_indices.append(current_step.step_index)
             plan.advance_to_next_step()
             self.overlay.update_plan(
@@ -1909,6 +1941,7 @@ class MagnumAgent:
             self.voice_engine.speak(f"Finished. {instruction}")
             console.print(f"\n[bold green]🎉 Done: {instruction}[/bold green]\n")
             log_task_complete(instruction, success=True, duration_seconds=time.time() - start_exec_time)
+            flight_recorder.finish_task(success=True)
 
             # Show watcher status
             watchers = self.task_queue.get_active_watchers()
@@ -1923,6 +1956,11 @@ class MagnumAgent:
                 error=e,
             )
             log_task_complete(instruction, success=False, duration_seconds=time.time() - start_exec_time)
+            flight_recorder.record_failure(
+                context=f"Fatal exception executing instruction: '{instruction}'",
+                error=e,
+            )
+            flight_recorder.finish_task(success=False)
             console.print(f"[bold red]❌ Error executing task:[/bold red] {e}")
             self.voice_engine.speak("An error occurred during task execution. Check magnum log.")
             return False

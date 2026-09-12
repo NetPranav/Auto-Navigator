@@ -15,3 +15,4 @@ build/
 node_modules/
 *.log
 scratch/
+runs/*.md

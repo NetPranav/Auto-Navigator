@@ -45,3 +45,41 @@ def test_get_recent_logs():
     logs = get_recent_logs(lines=10)
     assert isinstance(logs, str)
     assert len(logs) > 0
+
+
+def test_task_flight_recorder_audit():
+    from magnum.logger import flight_recorder, get_latest_run_summary
+    from magnum.intelligence.planner import PlanStep
+
+    flight_recorder.start_task("Test flight task", mode="desktop")
+    flight_recorder.record_plan("Test flight task", [
+        PlanStep(step_index=1, title="Test Step 1", description="Description 1"),
+    ])
+    flight_recorder.start_step(1, 1, "Test Step 1", "Description 1")
+    flight_recorder.record_attempt(
+        step_index=1,
+        attempt_number=1,
+        active_app="Antigravity IDE",
+        screenshot="test_step.png",
+        ocr_count=10,
+        a11y_targets_count=5,
+        ai_thought="Need to click button #3",
+        chosen_action="CLICK",
+        execution_tier="Tier 3: Native Cocoa AX",
+        target_id=3,
+        target_label="Run",
+        execution_success=True,
+        verification_confirmed=True,
+        verification_note="Run button pressed",
+    )
+    flight_recorder.complete_step(1, success=True)
+    flight_recorder.finish_task(success=True)
+
+    summary = get_latest_run_summary()
+    assert "MAGNUM TASK FLIGHT RECORDER" in summary
+    assert "Test flight task" in summary
+    assert "Test Step 1" in summary
+    assert "Need to click button #3" in summary
+    assert "Tier 3: Native Cocoa AX" in summary
+    assert "Run button pressed" in summary
+
