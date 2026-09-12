@@ -51,27 +51,88 @@ DEFAULT_EXECUTION_MODE=headless
 
 ---
 
-## 💡 Usage Examples
-
-### 1. LinkedIn Comment Flow
-```bash
-# Headless background mode
-autonavigator "post comment on Yash Rai's latest post on LinkedIn"
-
-# Or in desktop OS mode
-autonavigator --mode desktop "comment on Yash Rai's latest post on LinkedIn"
 ```
 
-### 2. GitHub Repo Copy Flow
+---
+
+## ⚡ How to Run
+
+### 1. Interactive REPL Mode (Recommended)
+Launch the interactive terminal assistant with live HUD overlay, perception, and background task management:
 ```bash
+# Using installed binary
+magnum
+
+# Or using Python module directly
+python -m magnum
+```
+
+### 2. Direct Single-Instruction Execution
+Run autonomous desktop and browser tasks directly from the shell:
+```bash
+# General OS & Browser automation
+magnum "open YouTube in Chrome and search for DeepMind Astra"
+
+# Desktop mode execution
+magnum --mode desktop "fill the registration form and click submit"
+
+# Antigravity autonomous development & pipeline execution
+magnum "automate antigravity"
+magnum "execute pipeline sample_pipeline.txt"
+```
+
+### 3. Hands-Free Voice Assistant Mode ("Hey Magnum" / "Jarvis")
+Enable always-on, low-latency wake-word voice interaction:
+```bash
+magnum --voice
+```
+> Wake words: `"Hey"`, `"Magnum"`, or `"Jarvis"`. Wait for chime or speak directly: *"Hey, open Terminal and check git status"*.
+
+### 4. Background Sentinel & Daemon Management
+Keep Magnum running continuously in the background to monitor apps, emails, and chats:
+```bash
+# Launch background daemon via macOS launchd
+magnum --start
+
+# Check daemon health & active PID
+magnum --status
+
+# Run foreground monitoring daemon
+magnum --daemon
+
+# Stop background daemon
+magnum --stop
+```
+
+### 5. Native Astra Computer Use Engine (Codex CLI)
+Directly invoke the bundled native Mach-O `open-computer-use` engine:
+```bash
+# List all running OS apps and state
+./node_modules/.bin/ocu list-apps
+
+# Inspect accessibility hierarchy of any app
+./node_modules/.bin/ocu snapshot "Safari"
+```
+
+---
+
+## 💡 Quick Examples & Automations
+
+### 1. LinkedIn & GitHub Workflows
+```bash
+# Headless background navigation (non-intrusive)
+autonavigator "post comment on Yash Rai's latest post on LinkedIn"
+
 # Search and copy repo to clipboard
 autonavigator "copy op_celestia from github from overxpowered"
 ```
 
-### 3. Interactive REPL Mode
-```bash
-autonavigator --interactive
-```
+### 2. Sentinel Universal App & Message Watcher
+Within the interactive prompt or single instruction:
+- `watch email for messages from Master`
+- `watch WhatsApp for important messages`
+- `what was I doing` (inspects Sentinel activity journal)
+- `suggest` (proactive context-aware task recommendation)
 
 ---
 
