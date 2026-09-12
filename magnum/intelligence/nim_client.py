@@ -209,7 +209,12 @@ class NimClient:
                 ],
             })
 
-        candidates = [self.reasoning_model, "nvidia/llama-3.1-nemotron-ultra-253b-v1", "nvidia/nemotron-3-super-120b-a12b", "meta/llama-3.2-11b-vision-instruct"]
+        candidates = [
+            self.reasoning_model,
+            "nvidia/nemotron-3-super-120b-a12b",
+            "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+            "meta/llama-3.2-11b-vision-instruct",
+        ]
         seen = set()
         for model_cand in candidates:
             if model_cand in seen:
@@ -495,12 +500,20 @@ class NimClient:
         
         logger.info(f"Screen Manifest: {element_count} elements detected")
 
-        # 2. If zero elements, fall back to vision model for description
-        if element_count == 0:
-            vision_desc = self.describe_screen(screenshot_base64)
-            screen_manifest = f"  (No text/a11y detected. Vision model says: {vision_desc})"
+        # 2. Visual scene perception: supplement manifest for app launch, setup, or obstacle steps
+        step_lower = (current_step.title + " " + current_step.description).lower()
+        needs_visual = (element_count == 0) or any(kw in step_lower for kw in ("open", "launch", "login", "qr", "welcome", "continue", "verify", "auth"))
+        
+        vision_context = ""
+        if needs_visual and screenshot_base64:
+            try:
+                scene_desc = self.describe_screen(screenshot_base64)
+                if scene_desc and "unable to parse" not in scene_desc:
+                    vision_context = f"\n\nVisual Screen Perception (Image Ground Truth):\n{scene_desc}"
+            except Exception as e:
+                logger.debug(f"Visual perception call skipped: {e}")
 
-        # 3. Reasoning Model decides the exact OS action based on the element manifest
+        # 3. Reasoning Model decides the exact OS action based on the element manifest & visual ground truth
         from magnum.intelligence.memory import get_memory
         memory_ctx = get_memory().get_prompt_context()
 
@@ -518,7 +531,8 @@ class NimClient:
         user_prompt = (
             f"Goal: {goal}\n"
             f"Current Step: {current_step.title} - {current_step.description}\n"
-            f"Screen Elements ({element_count} detected):\n{screen_manifest}\n\n"
+            f"Screen Elements ({element_count} detected):\n{screen_manifest}"
+            f"{vision_context}\n\n"
             f"What is the exact next JSON action?"
         )
 

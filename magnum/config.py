@@ -37,7 +37,7 @@ class AppConfig(BaseModel):
     )
     default_reasoning_model: str = Field(
         default_factory=lambda: os.getenv(
-            "DEFAULT_REASONING_MODEL", "nvidia/llama-3.1-nemotron-ultra-253b-v1"
+            "DEFAULT_REASONING_MODEL", "nvidia/nemotron-3-super-120b-a12b"
         )
     )
 
@@ -117,7 +117,7 @@ class AppConfig(BaseModel):
     )
     sentinel_reasoning_model: str = Field(
         default_factory=lambda: os.getenv(
-            "SENTINEL_REASONING_MODEL", "nvidia/llama-3.1-nemotron-ultra-253b-v1"
+            "SENTINEL_REASONING_MODEL", "nvidia/nemotron-3-super-120b-a12b"
         )
     )
     suggestion_interval: float = Field(

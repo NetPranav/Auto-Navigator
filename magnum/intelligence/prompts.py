@@ -82,11 +82,16 @@ PREFER TARGET_ID FOR ALL INTERACTIONS:
 - When you want to click, double click, focus, or type into an element, specify "target_id": ID (e.g. "target_id": 4).
 - Specifying "target_id" guarantees 100% deterministic, pixel-perfect clicks with zero coordinate error!
 
-CRITICAL APP vs WEBSITE DISTINCTION:
+CRITICAL APP vs WEBSITE DISTINCTION & APPLICATION LAUNCHING:
 - The FIRST element in Screen Elements (e.g. [1] "Antigravity IDE", [1] "Google Chrome", [1] "Visual Studio Code") is ALWAYS the currently active foreground macOS application from the menu bar.
-- Antigravity IDE, VS Code, Xcode, Terminal, Finder, Spotify, Discord, Slack, Notes, TextEdit, Preview, System Settings = DESKTOP APPS. Open them with "OPEN_APP".
+- Antigravity IDE, VS Code, Xcode, Terminal, Finder, Spotify, Discord, Slack, WhatsApp, Notes, TextEdit, Preview, System Settings = DESKTOP APPS. Open them with "OPEN_APP".
 - YouTube, Gmail, LinkedIn, GitHub = WEBSITES. Open them with "NAVIGATE" (which opens them in the browser).
 - NEVER use "NAVIGATE" for desktop apps. NEVER use "OPEN_APP" for websites.
+
+CRITICAL RULE FOR OPENING/LAUNCHING APPS:
+- When the current step requires opening or launching an application (e.g. WhatsApp, Google Chrome, Finder) and the target application is NOT yet the active foreground window:
+  -> You MUST output action "OPEN_APP" with "text": "<Application Name>" (e.g. "text": "WhatsApp").
+  -> NEVER attempt to click on text, code lines, editor tabs, or terminal logs inside Antigravity IDE or VS Code that happen to say "Open WhatsApp" or match the step title! Code inside an IDE is text, NOT an application launcher!
 
 Decision Rules:
 1. REAL-LIFE SITUATION & OBSTACLE EVALUATION (HIGHEST PRIORITY):
@@ -101,14 +106,16 @@ Decision Rules:
    -> Set "text": A natural, spoken voice instruction for the user telling them what is happening and what action to take (e.g. "WhatsApp is not logged in. Please scan the QR code on your screen with your phone. I am waiting for you to scan it.", or "Please complete the verification on screen so I can proceed.")
    -> NEVER attempt to click on static QR code images, background graphics, or guess security credentials!
 
-2. Is the current step's objective ALREADY achieved on screen?
+2. SETUP, WELCOME & INTERSTITIAL SCREENS:
+   - When an application presents an initial welcome, terms, or interstitial screen with a button like "Continue", "Get Started", "Next", or "Agree":
+     -> You MUST click that button using its "target_id" or "text" to advance into the application interface or login view.
+     -> Do NOT mark the step done while an interstitial screen is still blocking the main interface.
+
+3. Is the current step's objective ALREADY achieved on screen?
    - Check element [1] (the menu bar app name). If it matches the target app and no sub-actions are pending -> "action": "STEP_DONE"
    - For "Navigate to Website": If elements contain the target website's text (e.g. "YouTube", "Gmail") -> "STEP_DONE" or "FINISH"
    - For "Search": If search results are visible in the elements -> "STEP_DONE"
    - For "Type in text box": If history shows we already typed the text -> "STEP_DONE"
-
-3. Setup & Interstitial Screens:
-   - If an application presents an initial welcome/terms screen with a button like "Continue", "Get Started", or "Agree", click that button to transition into the main app or login screen.
 
 4. Available actions:
    - "CLICK": click on a UI element. Provide "target_id": ID (and optionally "text" with the element label).

@@ -1636,6 +1636,22 @@ class MagnumAgent:
                     if step_completed:
                         break
 
+                    # ── AUTO-INTERSTITIAL HANDLER ("Continue", "Get Started", "Agree") ──
+                    interstitial_keywords = ("continue", "get started", "agree and continue", "agree", "let's go", "start using")
+                    interstitial_clicked = False
+                    for el in ocr_elements:
+                        el_clean = el.text.strip().lower()
+                        if el_clean in interstitial_keywords:
+                            # Verify it's in a target app (e.g. WhatsApp, Chrome) or welcome dialog
+                            if any(target in active_app.lower() for target in ("whatsapp", "chrome", "safari", "telegram", "slack")) or any("welcome" in o.text.lower() for o in ocr_elements[:10]):
+                                console.print(f"[bold green]🔄 Detected interstitial button '{el.text}' in {active_app}: clicking to advance into app...[/bold green]")
+                                await self.driver.click(el.center_x, el.center_y)
+                                await asyncio.sleep(2.0)
+                                interstitial_clicked = True
+                                break
+                    if interstitial_clicked:
+                        continue
+
                     # Reasoning model
                     console.print(f"[dim]🧠 Reasoning...[/dim]")
                     action_data: GroundedAction = self.nim_client.ground_step_action(
@@ -1705,21 +1721,41 @@ class MagnumAgent:
 
                     elif act_type == "OPEN_APP":
                         app_name = action_data.text or "Google Chrome"
+                        is_launch_step = any(kw in current_step.title.lower() for kw in ("open ", "launch ", "switch to ", "focus ")) and not any(
+                            sub in current_step.title.lower() for sub in ("search", "chat", "message", "reply", "type", "send", "click")
+                        )
                         already_open = False
-                        if ocr_elements:
-                            frontmost = ocr_elements[0].text.strip().lower()
+                        try:
+                            from magnum.driver.macos_ax import MacOSAccessibilityDriver
+                            frontmost = MacOSAccessibilityDriver.get_frontmost_app()
+                            if frontmost and frontmost.get("name"):
+                                f_name = frontmost["name"].lower()
+                                a_name = app_name.lower()
+                                if a_name in f_name or f_name in a_name or any(w in f_name for w in a_name.split() if len(w) > 3):
+                                    already_open = True
+                        except Exception:
+                            pass
+
+                        if not already_open and ocr_elements:
+                            frontmost_ocr = ocr_elements[0].text.strip().lower()
                             app_lower = app_name.lower()
-                            if app_lower in frontmost or frontmost in app_lower or any(w in frontmost for w in app_lower.split()):
+                            if app_lower in frontmost_ocr or frontmost_ocr in app_lower or any(w in frontmost_ocr for w in app_lower.split() if len(w) > 3):
                                 already_open = True
-                                console.print(f"[bold green]✓ '{app_name}' already active[/bold green]")
-                                step_completed = True
-                                break
+
                         if not already_open:
                             console.print(f"[bold green]🚀 Opening: {app_name}[/bold green]")
                             await self.driver.navigate(app_name)
-                            await asyncio.sleep(2.0)
+                            await asyncio.sleep(2.5)
+                        else:
+                            console.print(f"[bold green]✓ '{app_name}' already active[/bold green]")
+
+                        if is_launch_step:
                             step_completed = True
                             break
+                        else:
+                            console.print(f"[bold cyan]📱 Brought '{app_name}' to foreground. Continuing step execution inside '{app_name}'...[/bold cyan]")
+                            await asyncio.sleep(1.0)
+                            continue
 
                     elif act_type == "NAVIGATE":
                         target = action_data.text or "https://google.com"
@@ -1845,9 +1881,34 @@ class MagnumAgent:
                             await asyncio.sleep(1.0)
 
                     elif act_type in ("CLICK", "DOUBLE_CLICK", "RIGHT_CLICK"):
-                        x, y = 0.0, 0.0
+                        # ── SAFETY GUARD: APP LAUNCH REDIRECTION ──
+                        # If current step is to open/launch an app, and the model attempts to click
+                        # on editor code text matching the app name or step title inside Antigravity / editor,
+                        # intercept and perform native system app launch instead!
+                        step_title_lower = current_step.title.lower()
+                        is_launch_step = any(kw in step_title_lower for kw in ("open ", "launch ", "start ", "focus ")) and not any(
+                            sub in step_title_lower for sub in ("search", "chat", "message", "reply", "type", "send")
+                        )
                         target_id = action_data.target_id
                         target_el = a11y_tree.get_element_by_id(target_id) if (target_id and a11y_tree) else None
+
+                        if is_launch_step:
+                            target_text = (action_data.text or "").strip().lower()
+                            if target_el and target_el.label:
+                                target_text = target_el.label.strip().lower()
+                            
+                            # Check if user/agent is currently inside an IDE / text editor
+                            if any(ide in active_app.lower() for ide in ("antigravity", "code", "terminal", "sublime", "editor")):
+                                known_apps = ["whatsapp", "chrome", "google chrome", "safari", "spotify", "slack", "discord", "notes", "finder", "terminal"]
+                                target_app = next((app for app in known_apps if app in step_title_lower or app in target_text), None)
+                                if target_app:
+                                    console.print(f"[bold yellow]🛡️ Intercepted click on editor text '{target_text}'! Redirecting to native launch: '{target_app.title()}'[/bold yellow]")
+                                    await self.driver.navigate(target_app.title())
+                                    await asyncio.sleep(2.5)
+                                    step_completed = True
+                                    break
+
+                        x, y = 0.0, 0.0
 
                         # ── MULTI-TIER EXECUTION CASCADE ──
                         # Tier 1: Browser DOM dispatch (Chrome/Safari)
@@ -2000,12 +2061,23 @@ class MagnumAgent:
                             if any(typed_lower in el.text.strip().lower() for el in verify_ocr):
                                 console.print(f"[bold green]✓ Astra Verification: Text '{action_data.text[:30]}' confirmed on screen[/bold green]")
                                 step_completed = True
-                        elif act_type in ("CLICK", "DOUBLE_CLICK") and plan.active_index < len(plan.steps):
-                            next_step = plan.steps[plan.active_index]
-                            next_keywords = next_step.title.lower().split()
-                            if any(len(w) > 4 and any(w in el.text.strip().lower() for el in verify_ocr) for w in next_keywords):
-                                console.print(f"[bold green]✓ Astra Verification: Next step content '{next_step.title}' now visible[/bold green]")
-                                step_completed = True
+                        elif act_type in ("CLICK", "DOUBLE_CLICK"):
+                            # If this was an app launch step, verify that the frontmost app actually changed to target app
+                            step_title_lower = current_step.title.lower()
+                            is_launch_step = any(kw in step_title_lower for kw in ("open ", "launch ", "start ", "focus ")) and not any(
+                                sub in step_title_lower for sub in ("search", "chat", "message", "reply", "type", "send")
+                            )
+                            if is_launch_step:
+                                try:
+                                    from magnum.driver.macos_ax import MacOSAccessibilityDriver
+                                    front = MacOSAccessibilityDriver.get_frontmost_app()
+                                    front_name = (front.get("name") or "").lower() if front else ""
+                                    target_words = [w for w in step_title_lower.split() if w not in ("open", "launch", "the", "app", "application", "window", "desktop")]
+                                    if target_words and any(w in front_name for w in target_words):
+                                        console.print(f"[bold green]✓ Astra Verification: Target app '{front_name}' is now active foreground[/bold green]")
+                                        step_completed = True
+                                except Exception:
+                                    pass
                     except Exception as e:
                         logger.debug(f"Astra verification check skipped: {e}")
 
