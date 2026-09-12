@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "magnum"
+version = "1.0.0"
+description = "Magnum — Pranav's AI Desktop Assistant. Always-on, voice-activated autonomous computer agent."
+readme = "README.md"
+authors = [{ name = "Pranav" }]
+requires-python = ">=3.10"
+dependencies = [
+    "openai>=1.30.0",
+    "playwright>=1.40.0",
+    "pillow>=10.0.0",
+    "pyautogui>=0.9.54",
+    "pynput>=1.7.6",
+    "pyperclip>=1.8.2",
+    "rich>=13.0.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+voice = [
+    "pvporcupine>=3.0.0",
+    "pvrecorder>=1.2.0",
+    "faster-whisper>=1.0.0",
+    "sounddevice>=0.4.6",
+    "edge-tts>=6.1.0",
+    "numpy>=1.24.0",
+]
+
+[project.scripts]
+magnum = "magnum.cli:main"
+autonavigator = "autonavigator.cli:main"
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+
+[tool.setuptools.packages.find]
+include = ["magnum*", "autonavigator*"]

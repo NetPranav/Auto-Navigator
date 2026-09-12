@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.pytest_cache/
+browser_profile/
+recordings/
+screenshots/
+dist/
+build/
+*.egg-info/
+.DS_Store
+node_modules/
+*.log
+scratch/

@@ -1,0 +1,5 @@
+Phase 1: Create a simple hello world python script named hello.py that prints a greeting and current system time.
+---
+Phase 2: Add a unit test in test_hello.py that imports hello.py and asserts it returns successfully.
+---
+Phase 3: Run pytest to verify that test_hello.py passes cleanly.
