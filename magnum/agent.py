@@ -9,8 +9,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Any
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -285,6 +286,195 @@ class MagnumAgent:
                 }
 
         return None
+
+    def _should_auto_skip_app_open(
+        self,
+        current_step: Any,
+        active_app: str,
+        frontmost_app: str,
+        top_bar_texts: List[str],
+    ) -> Optional[str]:
+        """
+        Determine if current step is solely an app-launch step for an application
+        that is already active and focused on screen.
+        Prevents false-skipping of action steps like 'Search for Rishika in WhatsApp'.
+        """
+        title_lower = (getattr(current_step, "title", "") or "").lower().strip()
+        open_prefixes = ("open ", "launch ", "switch to ", "focus ")
+
+        # 1. Must start with an app opening command
+        if not any(title_lower.startswith(p) for p in open_prefixes):
+            return None
+
+        # 2. Must NOT contain inner sub-actions (search, message, chat, etc.)
+        subactions = (
+            "search", "chat", "message", "text", "send", "type", "click", "find",
+            "select", "reply", "compose", "call", "play", "tab", "file", "folder",
+            "url", "link", "box", "field", "button", "input", "write", "post", "enter"
+        )
+        if any(act in title_lower for act in subactions):
+            return None
+
+        # 3. Extract target app from title
+        target = title_lower
+        for p in open_prefixes:
+            if target.startswith(p):
+                target = target[len(p):].strip()
+                break
+
+        clean_target = re.sub(r"\b(the|desktop|application|app|window)\b", "", target).strip()
+        if not clean_target:
+            return None
+
+        candidates = [active_app.lower(), frontmost_app.lower()] + [t.lower() for t in top_bar_texts]
+        for cand in candidates:
+            cand = cand.strip()
+            if not cand:
+                continue
+            if clean_target == cand or clean_target in cand or cand in clean_target:
+                return cand.title()
+
+        return None
+
+    async def _handle_login_or_qr_gate(
+        self,
+        ocr_elements: List[Any],
+        a11y_tree: Any,
+        active_app: str,
+        screenshot: Any,
+        max_wait_seconds: int = 120,
+    ) -> bool:
+        """
+        Detects login barriers or QR code authentication gates (such as WhatsApp welcome/QR screen).
+        If a 'Continue'/'Get Started' welcome button is present, clicks it to reveal QR.
+        Speaks to user asking to scan the QR code with phone, polls visually until scan completes,
+        confirms login by voice, and resumes execution.
+        """
+        if not ocr_elements:
+            return False
+
+        all_text_lower = " ".join(el.text.strip().lower() for el in ocr_elements)
+        is_whatsapp = "whatsapp" in active_app.lower() or any("whatsapp" in el.text.lower() for el in ocr_elements)
+
+        chat_indicators = (
+            "chats", "unread", "type a message", "start a new chat", "status",
+            "channels", "archived", "communities", "search or start new chat"
+        )
+        has_chat_ui = any(ind in all_text_lower for ind in chat_indicators)
+
+        # 1. Check for initial Setup / Welcome screen with 'Continue' or 'Get Started' button
+        continue_btn = None
+        for el in ocr_elements:
+            clean_btn = el.text.strip().lstrip("\u200e\u200f").lower()
+            if clean_btn in ("continue", "get started", "agree and continue", "agree & continue"):
+                continue_btn = el
+                break
+
+        if not continue_btn and a11y_tree and getattr(a11y_tree, "elements", None):
+            for el in a11y_tree.elements:
+                lbl = (getattr(el, "label", "") or "").strip().lstrip("\u200e\u200f").lower()
+                if lbl in ("continue", "get started", "agree and continue", "agree & continue"):
+                    continue_btn = el
+                    break
+
+        if is_whatsapp and continue_btn and not has_chat_ui:
+            btn_name = getattr(continue_btn, "text", getattr(continue_btn, "label", "Continue")).strip()
+            console.print(f"[bold cyan]👆 Detected WhatsApp setup screen with '{btn_name}'. Clicking to reveal QR code...[/bold cyan]")
+            await self.driver.click(continue_btn.center_x, continue_btn.center_y)
+            await asyncio.sleep(2.0)
+            screenshot = await self.driver.screenshot("post_welcome_continue.png")
+            ocr_elements = ScreenGrounder.extract_screen_text_elements(screenshot)
+            all_text_lower = " ".join(el.text.strip().lower() for el in ocr_elements)
+
+        # 2. Check for QR code authentication screen
+        qr_clues = [
+            "scan the qr code",
+            "scan this code",
+            "open whatsapp on your phone",
+            "linked devices",
+            "link a device",
+            "point your phone",
+            "to use whatsapp on your computer",
+            "link with phone number",
+            "point your phone to this screen",
+            "scan the code",
+        ]
+        is_qr_gate = any(clue in all_text_lower for clue in qr_clues)
+        if not is_qr_gate:
+            if ("qr" in all_text_lower or "barcode" in all_text_lower) and any(w in all_text_lower for w in ("scan", "phone", "camera", "mobile")):
+                if not has_chat_ui:
+                    is_qr_gate = True
+
+        if not is_qr_gate:
+            return False
+
+        app_name = "WhatsApp" if (is_whatsapp or "whatsapp" in all_text_lower) else active_app
+        voice_prompt = f"{app_name} is not logged in. Please scan the QR code on your screen with your phone. I am waiting for you to scan it."
+
+        console.print(f"\n[bold yellow]════════════════════════════════════════════════════════════[/bold yellow]")
+        console.print(f"[bold yellow]📱 AUTHENTICATION / QR CODE GATE DETECTED FOR {app_name.upper()}![/bold yellow]")
+        console.print(f"[bold cyan]🗣️  Speaking to user:[/bold cyan] '{voice_prompt}'")
+        console.print(f"[bold yellow]════════════════════════════════════════════════════════════[/bold yellow]\n")
+
+        self.voice_engine.speak(voice_prompt)
+        self.overlay.set_status(f"📱 WAITING FOR {app_name.upper()} QR SCAN...")
+
+        # Record in flight recorder
+        try:
+            from magnum.logger import flight_recorder
+            flight_recorder.record_attempt(
+                step_index=0,
+                attempt_number=1,
+                active_app=app_name,
+                screenshot="qr_code_gate.png",
+                ocr_count=len(ocr_elements),
+                a11y_targets_count=len(a11y_tree.elements) if a11y_tree and a11y_tree.elements else 0,
+                ai_thought=f"Detected QR authentication gate for {app_name}. Pausing execution and asking user to scan QR with phone.",
+                chosen_action="WAIT_FOR_QR_SCAN",
+                execution_tier="Human-in-the-Loop Voice Authentication",
+                target_label="QR Code",
+                input_text=voice_prompt,
+                execution_success=True,
+                verification_confirmed=False,
+                verification_note="Waiting for user phone scan to dismiss QR screen",
+            )
+        except Exception:
+            pass
+
+        # Poll screen until QR screen is dismissed and user is authenticated
+        poll_interval = 2.0
+        start_time = time.time()
+        login_confirmed = False
+
+        while time.time() - start_time < max_wait_seconds:
+            await asyncio.sleep(poll_interval)
+            try:
+                poll_screenshot = await self.driver.screenshot("qr_poll.png")
+                poll_ocr = ScreenGrounder.extract_screen_text_elements(poll_screenshot)
+                poll_text = " ".join(el.text.strip().lower() for el in poll_ocr)
+
+                qr_persists = any(clue in poll_text for clue in qr_clues)
+                if not qr_persists:
+                    chat_found = any(ind in poll_text for ind in chat_indicators)
+                    if chat_found or len(poll_ocr) >= 12:
+                        login_confirmed = True
+                        break
+            except Exception as e:
+                logger.debug(f"Error polling QR screen: {e}")
+
+        if login_confirmed:
+            confirm_msg = "Login confirmed. Continuing."
+            console.print(f"[bold green]✅ QR code scan detected! {app_name} is now logged in.[/bold green]")
+            self.voice_engine.speak(confirm_msg)
+            self.overlay.set_status(f"✅ {app_name.upper()} LOGGED IN")
+            await asyncio.sleep(1.0)
+            return True
+        else:
+            timeout_msg = f"{app_name} QR scan timed out. Please scan the QR code and try again."
+            console.print(f"[bold red]❌ QR code scan wait timed out after {max_wait_seconds}s.[/bold red]")
+            self.voice_engine.speak(timeout_msg)
+            self.overlay.set_status("❌ QR SCAN TIMED OUT")
+            return False
 
     async def process_instruction(self, instruction: str, is_workflow_step: bool = False) -> bool:
         """
@@ -1430,6 +1620,7 @@ class MagnumAgent:
 
             total_steps = len(plan.steps)
             history: List[str] = []
+            all_steps_successful = True
 
             # 3. Execute step-by-step
             while not plan.is_finished:
@@ -1489,6 +1680,41 @@ class MagnumAgent:
                     )
                     log_perception(active_app, element_count, len(a11y_tree.elements))
 
+                    # Check for login / QR code obstacle (e.g. WhatsApp QR setup gate)
+                    auth_resolved = await self._handle_login_or_qr_gate(
+                        ocr_elements=ocr_elements,
+                        a11y_tree=a11y_tree,
+                        active_app=active_app,
+                        screenshot=screenshot,
+                    )
+                    if auth_resolved:
+                        await asyncio.sleep(1.0)
+                        screenshot = await self.driver.screenshot(
+                            f"step_{current_step.step_index}_post_auth.png"
+                        )
+                        ocr_elements = ScreenGrounder.extract_screen_text_elements(screenshot)
+                        element_count = len(ocr_elements)
+                        try:
+                            frontmost = MacOSAccessibilityDriver.get_frontmost_app()
+                            if frontmost and frontmost.get("name"):
+                                active_app = frontmost["name"]
+                        except Exception:
+                            pass
+                        a11y_tree = A11yEngine.build_tree(
+                            image=screenshot,
+                            active_app=active_app,
+                            browser_controller=browser_ctrl,
+                            ocr_elements=ocr_elements,
+                        )
+                        log_perception(active_app, element_count, len(a11y_tree.elements))
+
+                        # If this step was solely to open/launch the app, it is now completed
+                        if any(current_step.title.lower().startswith(p) for p in ("open ", "launch ", "switch to ", "focus ")) and not any(sub in current_step.title.lower() for sub in ("search", "chat", "message", "text", "send", "type")):
+                            console.print(f"[bold green]✓ '{active_app}' is open and authenticated![/bold green]")
+                            history.append(f"Step {current_step.step_index}: AUTH_COMPLETED - {active_app} logged in")
+                            step_completed = True
+                            break
+
                     # Astra Set-of-Marks visual overlay
                     if a11y_tree.elements:
                         som_screenshot = ScreenGrounder.annotate_a11y_tree(screenshot, a11y_tree)
@@ -1507,42 +1733,20 @@ class MagnumAgent:
 
                     # Pre-flight: detect if step is already done
                     if ocr_elements and step_attempts == 1:
-                        step_lower = (current_step.title + " " + current_step.description).lower()
                         top_bar_texts = [el.text.strip().lower() for el in ocr_elements if el.top < 50]
                         frontmost_app = ocr_elements[0].text.strip().lower()
 
-                        desktop_apps = [
-                            "antigravity", "vs code", "visual studio code", "xcode",
-                            "terminal", "finder", "spotify", "discord", "slack",
-                            "notes", "textedit", "preview", "system settings",
-                            "safari", "google chrome", "chrome", "firefox", "arc",
-                            "iterm", "warp", "sublime", "atom", "intellij",
-                        ]
-
-                        if any(kw in step_lower for kw in ["open", "launch", "navigate to", "switch to", "focus"]):
-                            # 1. Check if target app is visible anywhere in top menu bar (top < 50)
-                            for app in desktop_apps:
-                                if app in step_lower and any(app in t for t in top_bar_texts):
-                                    console.print(f"[bold green]✓ '{app.title()}' is already visible/active on screen — skipping open step![/bold green]")
-                                    history.append(f"Step {current_step.step_index}: AUTO_SKIP - App active on screen: {app}")
-                                    step_completed = True
-                                    break
-
-                            # 2. Check frontmost app
-                            if not step_completed:
-                                for app in desktop_apps:
-                                    if app in step_lower and app in frontmost_app:
-                                        console.print(f"[bold green]✓ '{ocr_elements[0].text.strip()}' is already active — skipping![/bold green]")
-                                        history.append(f"Step {current_step.step_index}: AUTO_SKIP - App active: {ocr_elements[0].text.strip()}")
-                                        step_completed = True
-                                        break
-                            if not step_completed:
-                                for word in frontmost_app.split():
-                                    if len(word) > 3 and word in step_lower:
-                                        console.print(f"[bold green]✓ '{ocr_elements[0].text.strip()}' matches — skipping![/bold green]")
-                                        history.append(f"Step {current_step.step_index}: AUTO_SKIP - App active: {ocr_elements[0].text.strip()}")
-                                        step_completed = True
-                                        break
+                        skip_app = self._should_auto_skip_app_open(
+                            current_step=current_step,
+                            active_app=active_app,
+                            frontmost_app=frontmost_app,
+                            top_bar_texts=top_bar_texts,
+                        )
+                        if skip_app:
+                            console.print(f"[bold green]✓ '{skip_app}' is already visible/active on screen — skipping open step![/bold green]")
+                            history.append(f"Step {current_step.step_index}: AUTO_SKIP - App active on screen: {skip_app}")
+                            step_completed = True
+                            break
 
                         # Check if this checklist step is a continuous background watcher step
                         if any(kw in step_lower for kw in ("watch and click", "watch for", "repeating until", "again and again", "until instructed to stop", "until i tell you to stop")):
@@ -1930,42 +2134,55 @@ class MagnumAgent:
 
                 # Mark complete on HUD
                 if not step_completed:
+                    all_steps_successful = False
                     log_failure(
                         context=f"Step {current_step.step_index} exceeded {max_step_attempts} attempts without verification",
                         error=f"Step '{current_step.title}' not verified as completed.",
                         step_info=f"[{current_step.step_index}/{total_steps}] {current_step.title}",
                         screenshot_path=f"step_{current_step.step_index}_attempt_{step_attempts}.png",
                     )
-                flight_recorder.complete_step(current_step.step_index, success=step_completed)
-                completed_indices.append(current_step.step_index)
+                    flight_recorder.complete_step(current_step.step_index, success=False)
+                    console.print(f"[bold red]❌ Step {current_step.step_index} failed after {step_attempts} attempts![/bold red]")
+                else:
+                    flight_recorder.complete_step(current_step.step_index, success=True)
+                    completed_indices.append(current_step.step_index)
+                    console.print(f"[bold green]✓ Step {current_step.step_index} completed![/bold green]")
+
                 plan.advance_to_next_step()
                 self.overlay.update_plan(
                     steps=plan.get_titles_list(),
                     active_idx=plan.active_index,
                     completed=completed_indices,
                 )
-                console.print(f"[bold green]✓ Step {current_step.step_index} completed![/bold green]")
 
             # Done
-            self.overlay.set_status("GOAL ACCOMPLISHED")
-            self.overlay.flash()
-            self.hitl_handler.notify("Goal Completed!", f"Done: {instruction}")
-            try:
-                from magnum.notifications import send_notification
-                send_notification("⚡ Magnum: Goal Completed", f"Done: {instruction}", sound="Glass")
-            except Exception:
-                pass
-            self.voice_engine.speak(f"Finished. {instruction}")
-            console.print(f"\n[bold green]🎉 Done: {instruction}[/bold green]\n")
-            log_task_complete(instruction, success=True, duration_seconds=time.time() - start_exec_time)
-            flight_recorder.finish_task(success=True)
+            if all_steps_successful:
+                self.overlay.set_status("GOAL ACCOMPLISHED")
+                self.overlay.flash()
+                self.hitl_handler.notify("Goal Completed!", f"Done: {instruction}")
+                try:
+                    from magnum.notifications import send_notification
+                    send_notification("⚡ Magnum: Goal Completed", f"Done: {instruction}", sound="Glass")
+                except Exception:
+                    pass
+                self.voice_engine.speak(f"Finished. {instruction}")
+                console.print(f"\n[bold green]🎉 Done: {instruction}[/bold green]\n")
+                log_task_complete(instruction, success=True, duration_seconds=time.time() - start_exec_time)
+                flight_recorder.finish_task(success=True)
 
-            # Show watcher status
-            watchers = self.task_queue.get_active_watchers()
-            if watchers:
-                console.print(f"[dim]👁️ {len(watchers)} background watcher(s) resumed[/dim]")
+                # Show watcher status
+                watchers = self.task_queue.get_active_watchers()
+                if watchers:
+                    console.print(f"[dim]👁️ {len(watchers)} background watcher(s) resumed[/dim]")
 
-            return True
+                return True
+            else:
+                self.overlay.set_status("TASK INCOMPLETE")
+                self.voice_engine.speak(f"Could not complete all steps for {instruction}. Please check the screen.")
+                console.print(f"\n[bold red]⚠️ Task incomplete: some steps could not be verified.[/bold red]\n")
+                log_task_complete(instruction, success=False, duration_seconds=time.time() - start_exec_time)
+                flight_recorder.finish_task(success=False)
+                return False
 
         except Exception as e:
             log_failure(
