@@ -90,3 +90,35 @@ flowchart TD
     VisionGrounder --> HITL[1-Click HITL Confirmation]
     HITL --> Act[Execute Action & Notify User]
 ```
+
+---
+
+## ⚡ Magnum Autonomous Engine & Astra Computer Use
+
+Auto-Navigator features the **Magnum Autonomous Engine** with deep integration of OpenAI Astra / Codex Computer Use:
+
+### 1. Multi-Tier Execution Cascade
+Every user instruction and grounded action resolves through a 4-tier execution hierarchy:
+1. **Tier 1 - Browser DOM Automation**: Direct zero-latency DOM queries and synthetic dispatch (`click_element_by_id`, `type_element_by_id`, `select_dropdown_option`, `batch_fill_form`) across Chrome, Safari, and Playwright.
+2. **Tier 2 - Open Computer Use (OCU / Codex)**: Direct bridge into native `open-computer-use` Mach-O engine (`list_apps`, `get_app_state`, `click`, `set_value`, `press_key`, `scroll`, `drag`).
+3. **Tier 3 - Native macOS Cocoa Accessibility (`AXUIElement`)**: Pointer-free background control through `ApplicationServices` / `AppKit` using `kAXPressAction` and `kAXValueAttribute`.
+4. **Tier 4 - Desktop PyAutoGUI Fallback**: Hardware-level cursor coordinate clicking and keyboard synthesis.
+
+### 2. Astra Unified Accessibility Engine (`A11yEngine`)
+Consolidates active web page DOM trees, native macOS window hierarchies, and Apple Vision OCR into a unified, numbered element index `[1..N]` with Set-of-Marks visual overlays.
+
+### 3. Sentinel Intelligent Background Watchers
+- **Continuous App Monitoring**: Detects user context changes across WhatsApp, Mail, Terminal, and IDEs.
+- **Activity Journal & Proactive Suggestions**: Tracks ongoing tasks and surfaces recommendations prioritized by intent.
+- **Smart Email & WhatsApp Watchers**: Alerts on high-priority incoming messages or triggers follow-up automations.
+
+---
+
+## 🧪 Testing
+
+The repository includes a comprehensive 81-test verification suite covering unit, integration, and driver operations:
+
+```bash
+pytest tests/ -v
+# 81 passed in 4.7s
+```
