@@ -133,3 +133,39 @@ async def test_interstitial_continue_button_handling():
         assert success is True
         # Verify that Continue was clicked at its center coordinates (240, 315)
         agent.driver.click.assert_called_with(240.0, 315.0)
+
+
+@pytest.mark.asyncio
+async def test_user_cancellation_during_ask_user():
+    """Verify that when a user responds to an ASK_USER prompt with dismissal
+    (e.g. 'nothing i was not talking to you sorry' or 'cancel'), the agent
+    immediately aborts the task and returns False."""
+    agent = MagnumAgent(cfg=AppConfig(default_execution_mode="desktop"))
+    agent.driver.screenshot = AsyncMock(return_value=Image.new("RGB", (100, 100), color="white"))
+    agent.voice_engine.speak = MagicMock()
+
+    step = PlanStep(step_index=1, title="Clarify Request", description="Ask user for clarification")
+    plan = PlanChecklist(goal_summary="Unclear instruction", steps=[step], active_index=1)
+    agent.nim_client.generate_plan = MagicMock(return_value=plan)
+
+    action_ask = GroundedAction(
+        thought="Need to clarify user goal",
+        action="ASK_USER",
+        text="Could you please clarify what specific action you'd like me to perform?",
+    )
+    agent.nim_client.ground_step_action = MagicMock(return_value=action_ask)
+
+    # User answers that they were not talking to the agent
+    agent.hitl_handler.ask_user_text_async = AsyncMock(return_value="nothing i was not talkign to you sorry")
+
+    with patch("magnum.intelligence.grounding.ScreenGrounder.extract_screen_text_elements", return_value=[make_text_el("Desktop")]), \
+         patch("magnum.driver.macos_ax.MacOSAccessibilityDriver.get_frontmost_app", return_value={"name": "Desktop"}):
+        with patch.object(agent.overlay, "update_plan"), patch.object(agent.overlay, "set_status"), patch.object(agent.overlay, "flash"):
+            success = await agent.execute("San Mein Do Char chijen do Raha Hun")
+
+        # Task should have aborted
+        assert success is False
+        # Agent should have spoken acknowledgment
+        spoken = [call.args[0] for call in agent.voice_engine.speak.call_args_list]
+        assert any("canceling" in s.lower() or "understood" in s.lower() for s in spoken)
+

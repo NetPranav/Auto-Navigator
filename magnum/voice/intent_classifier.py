@@ -30,10 +30,11 @@ ACTION_VERBS: Set[str] = {
     "scroll", "turn", "switch", "delete", "remove", "refresh", "reload",
     "show", "look", "inspect", "create", "make", "start", "run", "launch",
     "watch", "monitor", "listen", "translate", "summarize", "help",
-    # Hindi / Hinglish
+    # Hindi / Hinglish (Imperatives only — non-imperative continuous like 'kar' excluded)
     "kholo", "khol", "band", "chalao", "chala", "bhejo", "bhej", "dekho",
-    "dekh", "dhundo", "khojo", "karo", "kardo", "kar", "hatao", "likho",
+    "dekh", "dhundo", "khojo", "karo", "kardo", "hatao", "likho",
     "likh", "banao", "sunao", "batao", "ruko", "ruk", "padho", "scan",
+    "kijiye", "bataiye", "dikhaiye",
 }
 
 # Target applications and OS nouns
@@ -43,14 +44,33 @@ TARGET_NOUNS: Set[str] = {
     "message", "messages", "chat", "msg", "email", "tab", "tabs",
     "window", "windows", "screen", "display", "desktop", "file", "files",
     "folder", "downloads", "documents", "button", "link", "url", "video",
-    "song", "music", "status", "watcher", "watchers", "workflow", "run",
+    "song", "music", "status", "watcher", "watchers", "workflow",
 }
 
 # Starters that indicate an imperative or polite request to the assistant
+# (Note: generic 'bhai' alone is excluded because it is common conversational slang with friends)
 COMMAND_STARTERS: Tuple[str, ...] = (
     "can you", "could you", "please", "i want you to", "i need you to",
     "help me", "go ahead and", "would you", "let me see", "zara",
-    "ek second", "sun", "suno", "bhai", "kya tum",
+    "ek second", "sun", "suno", "bhai sun", "bhai suno", "bhai please",
+    "bhai zara", "bhai ek kaam karo", "kya tum",
+)
+
+# Common conversational chatter patterns (talking to friends, self-referential speech)
+CONVERSATIONAL_CHATTER_MARKERS: Tuple[str, ...] = (
+    # Hindi / Hinglish continuous / past / discussion markers
+    "kar raha hun", "kar raha hu", "kar raha tha", "kar rahe the", "kar rahe hai",
+    "kar raha hai", "kar rahi hai", "raha hun", "raha hu", "rahe the", "raha tha",
+    "bol raha tha", "bol raha hun", "bol rahe the", "bol diya", "maar diya",
+    "baat kar raha", "baat kar rahe", "samjha raha tha", "explain kar raha",
+    "soch raha hun", "dekh raha tha", "ja raha hun", "a raha hun",
+    "maine to", "usne to", "mera dost", "apne dost", "apne friend", "dost se",
+    "bata raha tha", "kuch nahi", "aisa nahi hai", "nahi yaar", "nahi bhai",
+    "to maine", "usne bola", "chijen kar", "tool banati", "calling karta",
+    # English casual discussion
+    "i was talking", "i was explaining", "i was telling", "i am doing", "we were discussing",
+    "talking to my", "explaining to my", "talking to him", "telling him", "talking about",
+    "i think that", "honestly i", "well you know", "by the way", "i was just",
 )
 
 # Training Corpus: Positive Command / Task Samples
@@ -78,11 +98,12 @@ POSITIVE_COMMAND_SAMPLES: List[str] = [
     "can you open WhatsApp for me", "please check my unread messages",
     "could you reply to this message", "i want you to open Spotify",
     "help me search for this code", "zara screen dekhna",
-    "kya tum downloads folder open kar sakte ho", "bhai vishesh ko message kardo",
+    "kya tum downloads folder open kar sakte ho", "bhai sun vishesh ko message kardo",
 ]
 
-# Training Corpus: Negative Casual Chatter / Non-Task Samples
+# Training Corpus: Negative Casual Chatter / Non-Task Samples (English + Hindi/Hinglish)
 NEGATIVE_CHATTER_SAMPLES: List[str] = [
+    # English
     "I was talking to him yesterday about the party",
     "the weather in Mumbai is really hot today",
     "haha that was so funny", "lol that is hilarious",
@@ -106,6 +127,25 @@ NEGATIVE_CHATTER_SAMPLES: List[str] = [
     "my sister is graduating next month",
     "I forgot where I put my keys",
     "that was a very long meeting today",
+    # Hindi / Hinglish casual conversation with friends
+    "San Mein Do Char chijen Kar Raha Hun hello copy Maar Diya bhai",
+    "mai apne dost se baat kar raha tha",
+    "bhai mai to bas usko explain kar raha tha",
+    "maine uska review dekha tha kafi accha laga",
+    "ha bhai samajh gaya bilkul sahi bola tune",
+    "nahi bhai 460 me bhi nahi hua",
+    "wo bol raha tha ki sab ho gaya already",
+    "maine jitna bhi dekha na sabka tool bana diya",
+    "arre yaar kal milte hai sham ko",
+    "mai to bas movie dekh raha tha ghar pe",
+    "kya chal raha hai bhai sab badhiya",
+    "usne bola ki wo kal phone karega",
+    "mai abhi thoda busy hun baad me baat karte hai",
+    "ye wala code sahi se chal raha hai kya",
+    "barabar tool calling karta hai wo model",
+    "kuch nahi bhai bas aisi baatein chal rahi thi",
+    "chhod na bhai baad me dekhte hai",
+    "usko bolna call kare thodi der me",
 ]
 
 
@@ -207,6 +247,12 @@ class CommandIntentClassifier:
         if not words:
             return False, 0.0, "no_words"
 
+        # 0. Conversational chatter fast-reject (talking to friends, explaining to peers)
+        if any(marker in clean for marker in CONVERSATIONAL_CHATTER_MARKERS):
+            explicit_openers = ("hey magnum", "magnum", "auto-navigator")
+            if not any(clean.startswith(opener) for opener in explicit_openers):
+                return False, 0.05, "conversational_chatter"
+
         # 1. Direct imperative / Action Verb & Target Noun heuristic checks
         has_action_verb = any(w in ACTION_VERBS for w in words)
         has_target_noun = any(w in TARGET_NOUNS for w in words)
@@ -239,8 +285,8 @@ class CommandIntentClassifier:
 
         final_score = min(1.0, prob_pos * 0.5 + boost * 0.5)
 
-        # Threshold decision
-        is_cmd = final_score >= 0.50
+        # Threshold decision (solid 0.65+ confidence required to trigger autonomous execution)
+        is_cmd = final_score >= 0.65
         reason = "statistical_intent_match" if is_cmd else "casual_chatter"
         return is_cmd, final_score, reason
 

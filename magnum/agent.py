@@ -1871,6 +1871,24 @@ class MagnumAgent:
                             console.print(f"[bold green]✓ User: '{user_ans}'[/bold green]")
                             history.append(f"Agent Asked: {draft_text} | User: {user_ans}")
 
+                            # ── USER CANCELLATION / DISMISSAL DETECTION ──
+                            ans_lower = (user_ans or "").strip().lower()
+                            cancellation_markers = (
+                                "nothing", "not talking to you", "wasnt talking to you", "was not talking to you",
+                                "talkign to you", "cancel", "abort", "stop", "never mind", "nevermind", "leave it",
+                                "ignore", "sorry", "kuch nahi", "kuch nhi", "galat", "wrong", "chhod do", "rehne do",
+                                "band karo", "ruk jao", "nahi chahiye", "dont do anything", "don't do anything",
+                                "i was talking to", "was talking to my", "dost se baat", "friend se baat"
+                            )
+                            if any(cm in ans_lower for cm in cancellation_markers):
+                                console.print(f"\n[bold yellow]🛑 Task canceled by user: '{user_ans}'. Dismissing...[/bold yellow]\n")
+                                self.voice_engine.speak("Understood, canceling.")
+                                self.overlay.set_status("TASK CANCELED")
+                                from magnum.logger import flight_recorder
+                                flight_recorder.complete_step(current_step.step_index, success=False)
+                                flight_recorder.finish_task(success=False)
+                                return False
+
                             # Store in persistent memory & knowledge
                             from magnum.intelligence.memory import get_memory
                             mem = get_memory()

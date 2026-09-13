@@ -51,6 +51,11 @@ def test_casual_chatter_rejected():
         "yeah I think so too",
         "my dog is sleeping on the couch",
         "she told me she might come tomorrow",
+        "San Mein Do Char chijen Kar Raha Hun hello copy Maar Diya bhai",
+        "mai apne dost se baat kar raha tha",
+        "i was explaining something to my friend",
+        "Maine Jitna Bhi review Mein Dekhi Na Main Sabke Ek tool banati hai",
+        "bhai mai to bas explain kar raha tha usko",
     ]
     for non_cmd in chatter:
         is_cmd, conf, reason = clf.is_actionable_command(non_cmd)
